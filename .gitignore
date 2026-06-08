@@ -1,0 +1,5 @@
+local_ENV
+.env
+.env.*
+!.env.example
+
