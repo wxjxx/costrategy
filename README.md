@@ -22,10 +22,10 @@
 
 ```bash
 cd backend
-touch .env
+cp ../.env.example .env
 ```
 
-写入以下变量，并替换为本地真实值：
+检查以下变量，并替换为本地真实值：
 
 ```env
 DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>

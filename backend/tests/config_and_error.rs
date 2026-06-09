@@ -208,6 +208,17 @@ fn reads_actual_local_env_file_when_present() {
 }
 
 #[test]
+fn env_example_file_parses_with_current_backend_config() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.env.example");
+    let config = AppConfig::from_dotenv_file(&path).expect(".env.example should parse");
+
+    assert_eq!(config.database.host, "127.0.0.1");
+    assert_eq!(config.database.port, 5432);
+    assert_eq!(config.rustfs.bucket, "costrategy-files");
+    assert!(config.dingtalk.is_some());
+}
+
+#[test]
 fn api_errors_serialize_stable_codes_for_frontend() {
     let error = AppError::forbidden(ApiErrorCode::TaskNotAssignee);
     let body = error.body();
