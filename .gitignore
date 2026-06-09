@@ -3,3 +3,6 @@ local_ENV
 .env.*
 !.env.example
 
+backend/target/
+frontend/node_modules/
+frontend/dist/

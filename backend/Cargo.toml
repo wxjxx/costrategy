@@ -1,0 +1,33 @@
+[package]
+name = "costrategy-backend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "costrategy_backend"
+path = "src/lib.rs"
+
+[dependencies]
+actix-multipart = "0.7"
+actix-web = "4"
+async-trait = "0.1"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+aws-credential-types = "1"
+aws-sdk-s3 = "1"
+aws-smithy-types = "1"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+urlencoding = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+actix-http = "3"
+tempfile = "3"
