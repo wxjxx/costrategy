@@ -23,7 +23,7 @@ where
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
             tokio::time::sleep(sleep_for).await;
             if let Err(error) = service.notify_due_tomorrow(Local::now().date_naive()).await {
-                eprintln!("due_tomorrow scheduler failed: {error}");
+                log::error!("due_tomorrow scheduler failed: {error}");
             }
         }
     })
@@ -47,7 +47,7 @@ where
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
             tokio::time::sleep(sleep_for).await;
             if let Err(error) = service.notify_overdue(Local::now().date_naive()).await {
-                eprintln!("task_overdue scheduler failed: {error}");
+                log::error!("task_overdue scheduler failed: {error}");
             }
         }
     })

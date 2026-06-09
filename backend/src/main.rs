@@ -5,6 +5,7 @@ use costrategy_backend::config::AppConfig;
 use costrategy_backend::dingtalk::{
     start_contact_sync_scheduler, ConfiguredDingTalkClient, DingtalkSyncService,
 };
+use costrategy_backend::logging::{init_logging, request_logger};
 use costrategy_backend::notifications::{
     start_due_tomorrow_scheduler, start_overdue_scheduler, ReminderNotificationService,
     SqlxNotificationRepository,
@@ -17,10 +18,17 @@ use costrategy_backend::users::SqlxUserRepository;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    init_logging();
+    log::info!("starting costrategy backend service");
+
     let config = AppConfig::from_env().map_err(|error| std::io::Error::other(error.to_string()))?;
+    log::info!("loaded backend configuration");
+
     let pool = sqlx::PgPool::connect(&config.database.url())
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
+    log::info!("connected to postgres");
+
     let dingtalk_configured = config.dingtalk.is_some();
     let dingtalk = ConfiguredDingTalkClient::from_config(config.dingtalk.clone());
     let users = SqlxUserRepository::new(pool.clone());
@@ -46,9 +54,22 @@ async fn main() -> std::io::Result<()> {
             start_contact_sync_scheduler(sync_service),
         )
     });
+    if dingtalk_configured {
+        log::info!("started dingtalk and notification background schedulers");
+    } else {
+        log::info!("dingtalk configuration is not set; background schedulers are disabled");
+    }
+
+    let bind_address = ("127.0.0.1", 8080);
+    log::info!(
+        "starting http server on {}:{}",
+        bind_address.0,
+        bind_address.1
+    );
 
     HttpServer::new(move || {
         App::new()
+            .wrap(request_logger())
             .app_data(web::Data::new(app_state.clone()))
             .app_data(web::Data::new(projects.clone()))
             .app_data(web::Data::new(tasks.clone()))
@@ -106,7 +127,7 @@ async fn main() -> std::io::Result<()> {
                 >,
             )
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(bind_address)?
     .run()
     .await
 }

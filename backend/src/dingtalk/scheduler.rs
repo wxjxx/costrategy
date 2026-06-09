@@ -19,7 +19,7 @@ where
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
             tokio::time::sleep(sleep_for).await;
             if let Err(error) = service.sync_contacts().await {
-                eprintln!("dingtalk contact sync scheduler failed: {error}");
+                log::error!("dingtalk contact sync scheduler failed: {error}");
             }
         }
     })

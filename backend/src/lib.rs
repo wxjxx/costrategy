@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod dingtalk;
 pub mod error;
+pub mod logging;
 pub mod notifications;
 pub mod projects;
 pub mod routes;

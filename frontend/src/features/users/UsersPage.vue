@@ -1,0 +1,164 @@
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { Refresh, Search } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
+import { api } from "@/api/client";
+import UserAvatar from "@/components/UserAvatar.vue";
+import type { UserRole, UserStatus } from "@/types";
+
+const queryClient = useQueryClient();
+const { data: users } = useQuery({ queryKey: ["users"], queryFn: api.users });
+
+const keyword = ref("");
+const role = ref<UserRole | "">("");
+const status = ref<UserStatus | "">("");
+const roleDialog = ref(false);
+const selectedUserId = ref("");
+const selectedRole = ref<UserRole>("employee");
+
+const filteredUsers = computed(() =>
+  (users.value ?? []).filter((user) => {
+    if (keyword.value && !`${user.name}${user.mobile ?? ""}`.includes(keyword.value)) return false;
+    if (role.value && user.role !== role.value) return false;
+    if (status.value && user.status !== status.value) return false;
+    return true;
+  }),
+);
+const latestSyncedAt = computed(() => {
+  const timestamps = (users.value ?? [])
+    .map((user) => user.last_synced_at)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return timestamps.at(-1)?.slice(0, 19).replace("T", " ") ?? "-";
+});
+const selectedUser = computed(() =>
+  users.value?.find((user) => user.id === selectedUserId.value),
+);
+
+const roleMutation = useMutation({
+  mutationFn: () => api.updateUserRole(selectedUserId.value, selectedRole.value),
+  onSuccess: () => ElMessage.success("角色已更新"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+});
+const statusMutation = useMutation({
+  mutationFn: ({ userId, status }: { userId: string; status: UserStatus }) =>
+    api.updateUserStatus(userId, status),
+  onSuccess: () => ElMessage.success("用户状态已更新"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+});
+const syncMutation = useMutation({
+  mutationFn: api.syncDingtalk,
+  onSuccess: () => ElMessage.success("通讯录同步已触发"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+});
+
+function roleLabel(value: UserRole): string {
+  return { employee: "员工", manager: "管理人员", admin: "系统管理员" }[value];
+}
+
+function openRoleDialog(userId: string, userRole: UserRole) {
+  selectedUserId.value = userId;
+  selectedRole.value = userRole;
+  roleDialog.value = true;
+}
+</script>
+
+<template>
+  <div class="users-page">
+    <section class="metric-row">
+      <article class="metric-card"><span>◷</span><p>最近同步时间</p><strong>{{ latestSyncedAt }}</strong></article>
+      <article class="metric-card"><span>♙</span><p>用户总数</p><strong>{{ users?.length ?? 0 }} 人</strong></article>
+      <article class="metric-card"><span>✓</span><p>启用用户数</p><strong>{{ filteredUsers.filter((user) => user.status === 'active').length }} 人</strong></article>
+    </section>
+
+    <section class="content-card search-panel">
+      <ElForm label-position="top">
+        <ElRow :gutter="34">
+          <ElCol :span="7">
+            <ElFormItem label="关键词（姓名/手机号）">
+              <ElInput v-model="keyword" placeholder="请输入姓名或手机号">
+                <template #suffix><ElIcon><Search /></ElIcon></template>
+              </ElInput>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="7">
+            <ElFormItem label="系统角色">
+              <ElSelect v-model="role" clearable placeholder="请选择">
+                <ElOption label="员工" value="employee" />
+                <ElOption label="管理人员" value="manager" />
+                <ElOption label="系统管理员" value="admin" />
+              </ElSelect>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="7">
+            <ElFormItem label="用户状态">
+              <ElSelect v-model="status" clearable placeholder="请选择">
+                <ElOption label="正常" value="active" />
+                <ElOption label="停用" value="disabled" />
+              </ElSelect>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="3" class="search-actions">
+            <ElButton>重置</ElButton>
+            <ElButton type="primary">搜索</ElButton>
+          </ElCol>
+        </ElRow>
+      </ElForm>
+    </section>
+
+    <section class="content-card">
+      <div class="section-heading">
+        <h2>用户列表（共 {{ filteredUsers.length }} 人）</h2>
+        <ElButton type="primary" :loading="syncMutation.isPending.value" @click="syncMutation.mutate()">
+          <ElIcon><Refresh /></ElIcon>
+          立即同步
+        </ElButton>
+      </div>
+      <ElTable :data="filteredUsers">
+        <ElTableColumn label="头像" width="88"><template #default="{ row }"><UserAvatar :name="row.name" :size="42" /></template></ElTableColumn>
+        <ElTableColumn prop="name" label="姓名" width="110" />
+        <ElTableColumn prop="mobile" label="手机号" width="150" />
+        <ElTableColumn label="部门" min-width="160"><template #default="{ row }">{{ row.departments?.join("、") }}</template></ElTableColumn>
+        <ElTableColumn label="系统角色" width="150"><template #default="{ row }">{{ roleLabel(row.role) }}</template></ElTableColumn>
+        <ElTableColumn label="用户状态" width="110">
+          <template #default="{ row }">
+            <span class="state-dot" :class="{ disabled: row.status === 'disabled' }" />
+            {{ row.status === "active" ? "正常" : "停用" }}
+          </template>
+        </ElTableColumn>
+        <ElTableColumn prop="dingtalk_user_id" label="userId" width="150" />
+        <ElTableColumn prop="union_id" label="unionId" min-width="220" />
+        <ElTableColumn label="操作" width="160">
+          <template #default="{ row }">
+            <ElButton link type="primary" @click="openRoleDialog(row.id, row.role)">设置角色</ElButton>
+            <ElButton
+              link
+              :type="row.status === 'active' ? 'danger' : 'primary'"
+              @click="statusMutation.mutate({ userId: row.id, status: row.status === 'active' ? 'disabled' : 'active' })"
+            >
+              {{ row.status === "active" ? "停用" : "启用" }}
+            </ElButton>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+      <div class="table-footer">
+        <span>共 {{ filteredUsers.length }} 条</span>
+        <ElPagination layout="prev, pager, next, jumper" :total="filteredUsers.length" :page-size="10" />
+      </div>
+    </section>
+
+    <ElDialog v-model="roleDialog" title="设置系统角色" width="430">
+      <p class="dialog-subtitle">用户：{{ selectedUser?.name ?? "-" }}</p>
+      <ElRadioGroup v-model="selectedRole" class="role-radio">
+        <ElRadio value="employee">员工</ElRadio>
+        <ElRadio value="manager">管理人员</ElRadio>
+        <ElRadio value="admin">系统管理员</ElRadio>
+      </ElRadioGroup>
+      <template #footer>
+        <ElButton @click="roleDialog = false">取消</ElButton>
+        <ElButton type="primary" @click="roleMutation.mutate(); roleDialog = false">确认</ElButton>
+      </template>
+    </ElDialog>
+  </div>
+</template>

@@ -72,6 +72,13 @@ cd backend
 cargo run
 ```
 
+后端默认输出 `info` 级别服务日志和 HTTP 请求日志。需要调整日志级别时可设置 `RUST_LOG`：
+
+```bash
+cd backend
+RUST_LOG=debug,actix_web=info,actix_server=info cargo run
+```
+
 后端启动成功后可以访问：
 
 - 健康检查：`http://127.0.0.1:8080/api/health`

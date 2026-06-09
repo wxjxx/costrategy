@@ -1,0 +1,175 @@
+<script setup lang="ts">
+import { computed, reactive, ref } from "vue";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { Plus, Search } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
+import { api } from "@/api/client";
+import UserAvatar from "@/components/UserAvatar.vue";
+import type { Project, ProjectPayload, ProjectStatus } from "@/types";
+
+const queryClient = useQueryClient();
+const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+const { data: users } = useQuery({ queryKey: ["users"], queryFn: api.users });
+
+const keyword = ref("");
+const status = ref<ProjectStatus | "">("");
+const ownerId = ref("");
+const dialogVisible = ref(false);
+const editingProjectId = ref("");
+const projectForm = reactive<ProjectPayload>({
+  name: "",
+  owner_id: undefined,
+  description: "",
+});
+
+const filteredProjects = computed(() =>
+  (projects.value ?? []).filter((project) => {
+    if (keyword.value && !project.name.includes(keyword.value)) return false;
+    if (status.value && project.status !== status.value) return false;
+    if (ownerId.value && project.owner_id !== ownerId.value) return false;
+    return true;
+  }),
+);
+
+function ownerName(ownerIdValue?: string): string {
+  return users.value?.find((user) => user.id === ownerIdValue)?.name ?? "-";
+}
+
+function statusText(value: ProjectStatus): string {
+  return { active: "进行中", archived: "已归档", completed: "已完成", paused: "计划中" }[value];
+}
+
+const saveMutation = useMutation({
+  mutationFn: () =>
+    editingProjectId.value
+      ? api.updateProject(editingProjectId.value, projectForm)
+      : api.createProject(projectForm),
+  onSuccess: () => {
+    ElMessage.success("项目已保存");
+    dialogVisible.value = false;
+  },
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+});
+
+const archiveMutation = useMutation({
+  mutationFn: (projectId: string) => api.archiveProject(projectId),
+  onSuccess: () => ElMessage.success("项目已归档"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+});
+
+function openProjectDialog(project?: Project) {
+  editingProjectId.value = project?.id ?? "";
+  projectForm.name = project?.name ?? "";
+  projectForm.owner_id = project?.owner_id;
+  projectForm.description = project?.description ?? "";
+  dialogVisible.value = true;
+}
+</script>
+
+<template>
+  <div class="projects-page">
+    <section class="content-card search-panel">
+      <ElForm label-position="top">
+        <ElRow :gutter="40">
+          <ElCol :span="7">
+            <ElFormItem label="项目名称关键词">
+              <ElInput v-model="keyword" placeholder="请输入项目名称关键词">
+                <template #suffix><ElIcon><Search /></ElIcon></template>
+              </ElInput>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="7">
+            <ElFormItem label="项目状态">
+              <ElSelect v-model="status" clearable placeholder="请选择项目状态">
+                <ElOption label="进行中" value="active" />
+                <ElOption label="已完成" value="completed" />
+                <ElOption label="计划中" value="paused" />
+                <ElOption label="已归档" value="archived" />
+              </ElSelect>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="7">
+            <ElFormItem label="项目负责人">
+              <ElSelect v-model="ownerId" clearable placeholder="请选择项目负责人">
+                <ElOption
+                  v-for="user in users ?? []"
+                  :key="user.id"
+                  :label="user.name"
+                  :value="user.id"
+                />
+              </ElSelect>
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="3" class="search-actions">
+            <ElButton>重置</ElButton>
+            <ElButton type="primary">搜索</ElButton>
+          </ElCol>
+        </ElRow>
+      </ElForm>
+    </section>
+
+    <section class="content-card">
+      <div class="section-heading">
+        <h2>项目列表</h2>
+        <ElButton type="primary" @click="openProjectDialog()">
+          <ElIcon><Plus /></ElIcon>
+          新建项目
+        </ElButton>
+      </div>
+      <ElTable :data="filteredProjects" class="project-table">
+        <ElTableColumn label="项目名称" min-width="260">
+          <template #default="{ row }">
+            <strong>{{ row.name }}</strong>
+            <p>{{ row.id }}</p>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="项目负责人" width="180">
+          <template #default="{ row }">
+            <span class="table-user"><UserAvatar :name="ownerName(row.owner_id)" />{{ ownerName(row.owner_id) }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="项目描述" prop="description" min-width="320" />
+        <ElTableColumn label="项目状态" width="130">
+          <template #default="{ row }">
+            <ElTag :type="row.status === 'active' ? 'success' : row.status === 'completed' ? 'primary' : 'warning'">
+              {{ statusText(row.status) }}
+            </ElTag>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" width="160">
+          <template #default="{ row }">
+            <ElButton link type="primary" @click="openProjectDialog(row)">编辑</ElButton>
+            <ElButton link @click="archiveMutation.mutate(row.id)">归档</ElButton>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+      <div class="table-footer">
+        <ElPagination layout="prev, pager, next, sizes" :total="filteredProjects.length" :page-size="10" />
+        <span>共 {{ filteredProjects.length }} 条</span>
+      </div>
+    </section>
+
+    <ElDialog v-model="dialogVisible" :title="editingProjectId ? '编辑项目' : '新建项目'" width="600" class="form-dialog">
+      <ElForm label-width="98px">
+        <ElFormItem label="项目名称" required><ElInput v-model="projectForm.name" /></ElFormItem>
+        <ElFormItem label="项目负责人" required>
+          <ElSelect v-model="projectForm.owner_id" clearable>
+            <ElOption
+              v-for="user in users ?? []"
+              :key="user.id"
+              :label="user.name"
+              :value="user.id"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="项目描述" required>
+          <ElInput v-model="projectForm.description" type="textarea" :rows="4" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="dialogVisible = false">取消</ElButton>
+        <ElButton type="primary" :loading="saveMutation.isPending.value" @click="saveMutation.mutate()">保存</ElButton>
+      </template>
+    </ElDialog>
+  </div>
+</template>
