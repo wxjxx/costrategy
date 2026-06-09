@@ -2,6 +2,7 @@ use costrategy_backend::auth::UserRole;
 use costrategy_backend::dingtalk::{
     DingTalkDepartment, DingTalkUser, DingtalkSyncService, MockDingTalkClient,
 };
+use costrategy_backend::error::ApiErrorCode;
 use costrategy_backend::users::{MemoryUserRepository, UserStatus};
 
 #[tokio::test]
@@ -129,4 +130,27 @@ async fn sync_contacts_updates_existing_user_and_disables_missing_user() {
 
     let disabled_user = users.find_by_dingtalk_user_id("ding-user-2").await.unwrap();
     assert_eq!(disabled_user.status, UserStatus::Disabled);
+}
+
+#[tokio::test]
+async fn sync_contacts_records_failed_log_when_dingtalk_call_fails() {
+    let users = MemoryUserRepository::default();
+    let service = DingtalkSyncService::new(
+        MockDingTalkClient::default().with_sync_failure(),
+        users.clone(),
+    );
+
+    let error = service.sync_contacts().await.unwrap_err();
+
+    assert_eq!(error.code(), ApiErrorCode::DingtalkSyncFailed);
+    let logs = users.sync_logs().await;
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].status, "failed");
+    assert_eq!(logs[0].created_users, 0);
+    assert_eq!(logs[0].updated_users, 0);
+    assert_eq!(logs[0].disabled_users, 0);
+    assert_eq!(
+        logs[0].failure_reason.as_deref(),
+        Some("dingtalk sync failed")
+    );
 }

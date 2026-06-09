@@ -1,9 +1,11 @@
 mod repository;
+mod scheduler;
 mod service;
 
 pub use repository::{
     MemoryNotificationRepository, NewNotificationRecord, NotificationRecord,
-    NotificationRepository, NotificationRepositoryError, NotificationStatus, NotificationType,
-    SqlxNotificationRepository,
+    NotificationRepository, NotificationRepositoryError, NotificationRule, NotificationStatus,
+    NotificationType, SqlxNotificationRepository,
 };
-pub use service::TaskNotificationService;
+pub use scheduler::{start_due_tomorrow_scheduler, start_overdue_scheduler};
+pub use service::{ReminderNotificationService, TaskNotificationService};

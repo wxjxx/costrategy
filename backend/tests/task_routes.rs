@@ -117,6 +117,109 @@ async fn manager_can_create_edit_list_and_archive_task() {
 }
 
 #[actix_web::test]
+async fn task_list_can_include_archived_tasks_and_sort_by_priority() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+
+    let low_id = create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "低优先级任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "todo",
+            "priority": "low",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-01",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "高优先级任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "todo",
+            "priority": "high",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-20",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "中优先级任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "todo",
+            "priority": "medium",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-10",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+
+    let archive_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/api/tasks/{low_id}/archive"))
+            .cookie(manager_cookie.clone())
+            .to_request(),
+    )
+    .await;
+    assert_eq!(archive_response.status(), StatusCode::OK);
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/tasks?include_archived=true&sort=priority")
+            .cookie(manager_cookie)
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let tasks: serde_json::Value = test::read_body_json(response).await;
+    let titles = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["title"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["高优先级任务", "中优先级任务", "低优先级任务"]);
+    assert_eq!(tasks[2]["archived"], true);
+}
+
+#[actix_web::test]
+async fn task_list_rejects_unknown_sort_key() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let cookie = login_cookie(&app, "manager-code").await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/tasks?sort=unknown")
+            .cookie(cookie)
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
+}
+
+#[actix_web::test]
 async fn task_create_and_assignee_change_trigger_dingtalk_personal_notifications() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
@@ -390,6 +493,7 @@ impl TaskRouteFixture {
             .create_project(CreateProject {
                 code: "PM-001".to_string(),
                 name: "项目管理系统".to_string(),
+                owner_id: None,
                 description: None,
                 start_date: Some(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()),
                 end_date: Some(NaiveDate::from_ymd_opt(2026, 8, 1).unwrap()),

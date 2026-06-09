@@ -52,5 +52,7 @@ function user(role: CurrentUser['role']): CurrentUser {
     id: 'user-1',
     name: role === 'admin' ? '管理员' : '员工',
     role,
+    departments: [],
+    permissions: [],
   };
 }

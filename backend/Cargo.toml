@@ -2,6 +2,7 @@
 name = "costrategy-backend"
 version = "0.1.0"
 edition = "2021"
+default-run = "costrategy-backend"
 
 [lib]
 name = "costrategy_backend"

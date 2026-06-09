@@ -34,6 +34,8 @@ fn openapi_spec() -> Value {
             { "name": "Auth", "description": "钉钉免登和当前用户" },
             { "name": "DingTalk", "description": "钉钉通讯录同步" },
             { "name": "Projects", "description": "项目管理" },
+            { "name": "Users", "description": "用户管理" },
+            { "name": "Settings", "description": "系统设置" },
             { "name": "Tasks", "description": "任务工作台和任务详情" },
             { "name": "Attachments", "description": "任务附件" },
             { "name": "Notifications", "description": "通知记录" }
@@ -46,7 +48,7 @@ fn openapi_spec() -> Value {
 fn paths() -> Value {
     json!({
         "/api/health": {
-            "get": operation("Health", "健康检查", "返回服务健康状态", null, response_ref("HealthResponse"))
+            "get": operation("Health", "健康检查", "返回服务健康状态", Value::Null, response_ref("HealthResponse"))
         },
         "/api/auth/dingtalk/login": {
             "post": operation(
@@ -57,14 +59,26 @@ fn paths() -> Value {
                 response_ref("CurrentUser")
             )
         },
+        "/api/auth/logout": {
+            "post": secured_operation(
+                "Auth",
+                "退出登录",
+                "退出本系统登录态并清理 session cookie",
+                Value::Null,
+                empty_response()
+            )
+        },
         "/api/me": {
-            "get": secured_operation("Auth", "获取当前用户", "返回当前登录用户、角色和权限点", null, response_ref("CurrentUser"))
+            "get": secured_operation("Auth", "获取当前用户", "返回当前登录用户、角色和权限点", Value::Null, response_ref("CurrentUser"))
         },
         "/api/dingtalk/sync": {
-            "post": secured_operation("DingTalk", "同步钉钉通讯录", "系统管理员手动同步钉钉部门和用户", null, response_ref("DingtalkSyncResult"))
+            "post": secured_operation("DingTalk", "同步钉钉通讯录", "系统管理员手动同步钉钉部门和用户", Value::Null, response_ref("DingtalkSyncResult"))
+        },
+        "/api/dingtalk/sync-logs": {
+            "get": secured_operation("DingTalk", "通讯录同步日志", "系统管理员查看钉钉通讯录同步结果", Value::Null, array_response_ref("DingtalkSyncLog"))
         },
         "/api/projects": {
-            "get": secured_operation("Projects", "项目列表", "查询未归档项目", null, array_response_ref("Project")),
+            "get": secured_operation("Projects", "项目列表", "查询未归档项目", Value::Null, array_response_ref("Project")),
             "post": secured_operation("Projects", "创建项目", "管理人员或系统管理员创建项目", json_ref_body("ProjectPayload"), response_ref("Project"))
         },
         "/api/projects/{project_id}": {
@@ -83,15 +97,42 @@ fn paths() -> Value {
                 "归档项目",
                 "归档项目基础信息，不包含项目下任务视图",
                 vec![path_uuid_param("project_id", "项目 ID")],
-                null,
+                Value::Null,
                 response_ref("Project")
             )
+        },
+        "/api/users": {
+            "get": secured_operation("Users", "用户列表", "系统管理员查看钉钉同步用户和系统角色状态", Value::Null, array_response_ref("User"))
+        },
+        "/api/users/{user_id}/role": {
+            "patch": secured_operation_with_params(
+                "Users",
+                "设置用户角色",
+                "系统管理员设置用户系统角色",
+                vec![path_uuid_param("user_id", "用户 ID")],
+                json_ref_body("UpdateUserRoleRequest"),
+                response_ref("User")
+            )
+        },
+        "/api/users/{user_id}/status": {
+            "patch": secured_operation_with_params(
+                "Users",
+                "设置用户状态",
+                "系统管理员启用或停用用户",
+                vec![path_uuid_param("user_id", "用户 ID")],
+                json_ref_body("UpdateUserStatusRequest"),
+                response_ref("User")
+            )
+        },
+        "/api/settings": {
+            "get": secured_operation("Settings", "系统设置", "系统管理员读取钉钉和 RustFS 配置脱敏状态", Value::Null, response_ref("SettingsResponse")),
+            "put": secured_operation("Settings", "保存系统设置", "系统管理员保存系统配置，敏感值不返回明文", json_ref_body("SettingsUpdateRequest"), response_ref("SettingsResponse"))
         },
         "/api/tasks": {
             "get": secured_operation_with_params(
                 "Tasks",
                 "任务列表",
-                "按项目、人员、状态、优先级、日期范围和关键词查询未归档任务",
+                "按项目、人员、状态、优先级、日期范围和关键词查询任务，默认不返回归档任务",
                 vec![
                     query_param("keyword", "string", "任务标题关键词"),
                     query_param("project_id", "string", "项目 ID"),
@@ -99,9 +140,11 @@ fn paths() -> Value {
                     query_param("status", "string", "任务状态：todo、in_progress、done"),
                     query_param("priority", "string", "优先级：low、medium、high"),
                     query_param("date_from", "string", "开始日期，YYYY-MM-DD"),
-                    query_param("date_to", "string", "截止日期，YYYY-MM-DD")
+                    query_param("date_to", "string", "截止日期，YYYY-MM-DD"),
+                    query_param("include_archived", "boolean", "是否包含已归档任务，默认 false"),
+                    query_param("sort", "string", "排序字段：due_date、priority、status")
                 ],
-                null,
+                Value::Null,
                 array_response_ref("Task")
             ),
             "post": secured_operation("Tasks", "创建任务", "管理人员或系统管理员创建任务并触发负责人通知", json_ref_body("TaskPayload"), response_ref("Task"))
@@ -112,7 +155,7 @@ fn paths() -> Value {
                 "任务详情",
                 "读取任务、附件、评论和操作记录",
                 vec![path_uuid_param("task_id", "任务 ID")],
-                null,
+                Value::Null,
                 response_ref("TaskDetail")
             ),
             "put": secured_operation_with_params(
@@ -140,7 +183,7 @@ fn paths() -> Value {
                 "归档任务",
                 "管理人员或系统管理员归档任务",
                 vec![path_uuid_param("task_id", "任务 ID")],
-                null,
+                Value::Null,
                 response_ref("Task")
             )
         },
@@ -173,7 +216,7 @@ fn paths() -> Value {
                     path_uuid_param("task_id", "任务 ID"),
                     path_uuid_param("attachment_id", "附件 ID")
                 ],
-                null,
+                Value::Null,
                 binary_response()
             )
         },
@@ -186,12 +229,25 @@ fn paths() -> Value {
                     path_uuid_param("task_id", "任务 ID"),
                     path_uuid_param("attachment_id", "附件 ID")
                 ],
-                null,
+                Value::Null,
                 response_ref("TaskAttachment")
             )
         },
         "/api/notification-records": {
-            "get": secured_operation("Notifications", "通知记录", "系统管理员查看钉钉个人通知发送记录", null, array_response_ref("NotificationRecord"))
+            "get": secured_operation("Notifications", "通知记录", "系统管理员查看钉钉个人通知发送记录", Value::Null, array_response_ref("NotificationRecord"))
+        },
+        "/api/notification-rules": {
+            "get": secured_operation("Notifications", "通知规则", "系统管理员查看任务通知规则开关", Value::Null, array_response_ref("NotificationRule"))
+        },
+        "/api/notification-rules/{rule_type}": {
+            "patch": secured_operation_with_params(
+                "Notifications",
+                "更新通知规则",
+                "系统管理员启用或停用任务通知规则",
+                vec![path_param("rule_type", "string", "通知规则类型")],
+                json_ref_body("UpdateNotificationRuleRequest"),
+                response_ref("NotificationRule")
+            )
         }
     })
 }
@@ -217,19 +273,22 @@ fn components() -> Value {
             "DingtalkLoginRequest": object_schema(vec![required_prop("code", string_schema())]),
             "CurrentUser": object_schema(vec![
                 required_prop("id", uuid_schema()),
-                optional_prop("dingtalk_user_id", string_schema()),
-                optional_prop("union_id", string_schema()),
                 required_prop("name", string_schema()),
-                optional_prop("avatar_url", string_schema()),
-                optional_prop("mobile", string_schema()),
                 required_prop("role", enum_schema(vec!["employee", "manager", "admin"])),
-                required_prop("status", enum_schema(vec!["active", "disabled"])),
-                optional_prop("permissions", json!({ "type": "array", "items": string_schema() }))
+                required_prop("departments", json!({ "type": "array", "items": string_schema() })),
+                required_prop("permissions", json!({ "type": "array", "items": string_schema() }))
             ]),
             "DingtalkSyncResult": object_schema(vec![
                 required_prop("synced_departments", integer_schema()),
                 required_prop("synced_users", integer_schema()),
                 required_prop("disabled_users", integer_schema())
+            ]),
+            "DingtalkSyncLog": object_schema(vec![
+                required_prop("status", enum_schema(vec!["running", "success", "failed"])),
+                required_prop("created_users", integer_schema()),
+                required_prop("updated_users", integer_schema()),
+                required_prop("disabled_users", integer_schema()),
+                optional_prop("failure_reason", string_schema())
             ]),
             "Project": object_schema(vec![
                 required_prop("id", uuid_schema()),
@@ -242,6 +301,51 @@ fn components() -> Value {
                 required_prop("name", string_schema()),
                 optional_prop("description", string_schema()),
                 optional_prop("owner_id", uuid_schema())
+            ]),
+            "User": object_schema(vec![
+                required_prop("id", uuid_schema()),
+                required_prop("dingtalk_user_id", string_schema()),
+                optional_prop("union_id", string_schema()),
+                required_prop("name", string_schema()),
+                optional_prop("avatar_url", string_schema()),
+                optional_prop("mobile", string_schema()),
+                optional_prop("departments", json!({ "type": "array", "items": string_schema() })),
+                required_prop("role", enum_schema(vec!["employee", "manager", "admin"])),
+                required_prop("status", enum_schema(vec!["active", "disabled"])),
+                optional_prop("last_synced_at", datetime_schema())
+            ]),
+            "UpdateUserRoleRequest": object_schema(vec![
+                required_prop("role", enum_schema(vec!["employee", "manager", "admin"]))
+            ]),
+            "UpdateUserStatusRequest": object_schema(vec![
+                required_prop("status", enum_schema(vec!["active", "disabled"]))
+            ]),
+            "SettingsResponse": object_schema(vec![
+                required_prop("settings", array_ref("SettingItem")),
+                required_prop("connection_status", object_schema(vec![
+                    required_prop("rustfs", string_schema()),
+                    required_prop("dingtalk", string_schema())
+                ]))
+            ]),
+            "SettingItem": object_schema(vec![
+                required_prop("key", string_schema()),
+                required_prop("label", string_schema()),
+                required_prop("group", enum_schema(vec!["dingtalk", "rustfs"])),
+                required_prop("sensitive", json!({ "type": "boolean" })),
+                required_prop("configured", json!({ "type": "boolean" })),
+                required_prop("source", enum_schema(vec!["database", "env", "empty"])),
+                optional_prop("value_masked", string_schema()),
+                optional_prop("updated_by", uuid_schema()),
+                optional_prop("updated_at", datetime_schema())
+            ]),
+            "SettingsUpdateRequest": object_schema(vec![
+                required_prop("settings", json!({
+                    "type": "array",
+                    "items": object_schema(vec![
+                        required_prop("key", string_schema()),
+                        required_prop("value", string_schema())
+                    ])
+                }))
             ]),
             "Task": task_schema(),
             "TaskPayload": object_schema(vec![
@@ -299,6 +403,15 @@ fn components() -> Value {
                 required_prop("status", enum_schema(vec!["success", "failed"])),
                 optional_prop("failure_reason", string_schema()),
                 required_prop("sent_at", datetime_schema())
+            ]),
+            "NotificationRule": object_schema(vec![
+                required_prop("rule_type", enum_schema(vec!["task_assigned", "assignee_changed", "due_tomorrow", "task_overdue"])),
+                required_prop("enabled", json!({ "type": "boolean" })),
+                optional_prop("updated_by", uuid_schema()),
+                optional_prop("updated_at", datetime_schema())
+            ]),
+            "UpdateNotificationRuleRequest": object_schema(vec![
+                required_prop("enabled", json!({ "type": "boolean" }))
             ])
         },
         "responses": {
@@ -321,7 +434,15 @@ fn operation(
     request_body: Value,
     ok_response: Value,
 ) -> Value {
-    operation_with_params(tag, summary, description, Vec::new(), request_body, ok_response, false)
+    operation_with_params(
+        tag,
+        summary,
+        description,
+        Vec::new(),
+        request_body,
+        ok_response,
+        false,
+    )
 }
 
 fn secured_operation(
@@ -331,7 +452,15 @@ fn secured_operation(
     request_body: Value,
     ok_response: Value,
 ) -> Value {
-    operation_with_params(tag, summary, description, Vec::new(), request_body, ok_response, true)
+    operation_with_params(
+        tag,
+        summary,
+        description,
+        Vec::new(),
+        request_body,
+        ok_response,
+        true,
+    )
 }
 
 fn secured_operation_with_params(
@@ -342,7 +471,15 @@ fn secured_operation_with_params(
     request_body: Value,
     ok_response: Value,
 ) -> Value {
-    operation_with_params(tag, summary, description, parameters, request_body, ok_response, true)
+    operation_with_params(
+        tag,
+        summary,
+        description,
+        parameters,
+        request_body,
+        ok_response,
+        true,
+    )
 }
 
 fn operation_with_params(
@@ -390,6 +527,16 @@ fn path_uuid_param(name: &str, description: &str) -> Value {
         "required": true,
         "description": description,
         "schema": uuid_schema()
+    })
+}
+
+fn path_param(name: &str, type_name: &str, description: &str) -> Value {
+    json!({
+        "name": name,
+        "in": "path",
+        "required": true,
+        "description": description,
+        "schema": { "type": type_name }
     })
 }
 
@@ -468,6 +615,10 @@ fn binary_response() -> Value {
             }
         }
     })
+}
+
+fn empty_response() -> Value {
+    json!({ "description": "成功" })
 }
 
 fn task_schema() -> Value {

@@ -33,6 +33,14 @@ pub struct NotificationRecord {
     pub dedupe_date: Option<NaiveDate>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct NotificationRule {
+    pub rule_type: NotificationType,
+    pub enabled: bool,
+    pub updated_by: Option<Uuid>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewNotificationRecord {
     pub notification_type: NotificationType,
@@ -60,11 +68,34 @@ pub trait NotificationRepository: Clone + Send + Sync + 'static {
     ) -> Result<NotificationRecord, NotificationRepositoryError>;
 
     async fn list_records(&self) -> Result<Vec<NotificationRecord>, NotificationRepositoryError>;
+
+    async fn has_record(
+        &self,
+        notification_type: NotificationType,
+        task_id: Uuid,
+        receiver_id: Uuid,
+        dedupe_date: NaiveDate,
+    ) -> Result<bool, NotificationRepositoryError>;
+
+    async fn list_rules(&self) -> Result<Vec<NotificationRule>, NotificationRepositoryError>;
+
+    async fn update_rule(
+        &self,
+        rule_type: NotificationType,
+        enabled: bool,
+        updated_by: Uuid,
+    ) -> Result<NotificationRule, NotificationRepositoryError>;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryNotificationRepository {
-    inner: Arc<Mutex<Vec<NotificationRecord>>>,
+    inner: Arc<Mutex<MemoryNotificationState>>,
+}
+
+#[derive(Debug, Default)]
+struct MemoryNotificationState {
+    records: Vec<NotificationRecord>,
+    rules: Vec<NotificationRule>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +130,7 @@ impl NotificationRepository for MemoryNotificationRepository {
         self.inner
             .lock()
             .expect("memory notification repository lock")
+            .records
             .push(stored.clone());
         Ok(stored)
     }
@@ -108,9 +140,84 @@ impl NotificationRepository for MemoryNotificationRepository {
             .inner
             .lock()
             .expect("memory notification repository lock")
+            .records
             .clone();
         records.sort_by(|left, right| right.sent_at.cmp(&left.sent_at));
         Ok(records)
+    }
+
+    async fn has_record(
+        &self,
+        notification_type: NotificationType,
+        task_id: Uuid,
+        receiver_id: Uuid,
+        dedupe_date: NaiveDate,
+    ) -> Result<bool, NotificationRepositoryError> {
+        Ok(self
+            .inner
+            .lock()
+            .expect("memory notification repository lock")
+            .records
+            .iter()
+            .any(|record| {
+                record.notification_type == notification_type
+                    && record.task_id == Some(task_id)
+                    && record.receiver_id == receiver_id
+                    && record.dedupe_date == Some(dedupe_date)
+            }))
+    }
+
+    async fn list_rules(&self) -> Result<Vec<NotificationRule>, NotificationRepositoryError> {
+        let state = self
+            .inner
+            .lock()
+            .expect("memory notification repository lock");
+        Ok(default_notification_types()
+            .into_iter()
+            .map(|rule_type| {
+                state
+                    .rules
+                    .iter()
+                    .find(|rule| rule.rule_type == rule_type)
+                    .cloned()
+                    .unwrap_or(NotificationRule {
+                        rule_type,
+                        enabled: true,
+                        updated_by: None,
+                        updated_at: None,
+                    })
+            })
+            .collect())
+    }
+
+    async fn update_rule(
+        &self,
+        rule_type: NotificationType,
+        enabled: bool,
+        updated_by: Uuid,
+    ) -> Result<NotificationRule, NotificationRepositoryError> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("memory notification repository lock");
+        let updated = NotificationRule {
+            rule_type,
+            enabled,
+            updated_by: Some(updated_by),
+            updated_at: Some(Utc::now()),
+        };
+
+        if let Some(existing) = state
+            .rules
+            .iter_mut()
+            .find(|rule| rule.rule_type == rule_type)
+        {
+            *existing = updated.clone();
+        } else {
+            state.rules.push(updated.clone());
+        }
+
+        Ok(updated)
     }
 }
 
@@ -159,6 +266,88 @@ impl NotificationRepository for SqlxNotificationRepository {
         .map(row_to_record)
         .collect()
     }
+
+    async fn has_record(
+        &self,
+        notification_type: NotificationType,
+        task_id: Uuid,
+        receiver_id: Uuid,
+        dedupe_date: NaiveDate,
+    ) -> Result<bool, NotificationRepositoryError> {
+        sqlx::query_scalar(
+            "select exists(
+                select 1
+                from notification_records
+                where notification_type = $1
+                  and task_id = $2
+                  and receiver_id = $3
+                  and dedupe_date = $4
+            )",
+        )
+        .bind(notification_type.as_str())
+        .bind(task_id)
+        .bind(receiver_id)
+        .bind(dedupe_date)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| NotificationRepositoryError::Database)
+    }
+
+    async fn list_rules(&self) -> Result<Vec<NotificationRule>, NotificationRepositoryError> {
+        let rows = sqlx::query(
+            "select rule_type, enabled, updated_by, updated_at
+             from notification_rules",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| NotificationRepositoryError::Database)?;
+        let stored = rows
+            .into_iter()
+            .map(row_to_rule)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(default_notification_types()
+            .into_iter()
+            .map(|rule_type| {
+                stored
+                    .iter()
+                    .find(|rule| rule.rule_type == rule_type)
+                    .cloned()
+                    .unwrap_or(NotificationRule {
+                        rule_type,
+                        enabled: true,
+                        updated_by: None,
+                        updated_at: None,
+                    })
+            })
+            .collect())
+    }
+
+    async fn update_rule(
+        &self,
+        rule_type: NotificationType,
+        enabled: bool,
+        updated_by: Uuid,
+    ) -> Result<NotificationRule, NotificationRepositoryError> {
+        let row = sqlx::query(
+            "insert into notification_rules (id, rule_type, enabled, updated_by, updated_at)
+             values ($1, $2, $3, $4, now())
+             on conflict (rule_type) do update set
+                enabled = excluded.enabled,
+                updated_by = excluded.updated_by,
+                updated_at = now()
+             returning rule_type, enabled, updated_by, updated_at",
+        )
+        .bind(Uuid::new_v4())
+        .bind(rule_type.as_str())
+        .bind(enabled)
+        .bind(updated_by)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| NotificationRepositoryError::Database)?;
+
+        row_to_rule(row)
+    }
 }
 
 impl NotificationType {
@@ -170,6 +359,15 @@ impl NotificationType {
             Self::TaskOverdue => "task_overdue",
         }
     }
+}
+
+fn default_notification_types() -> Vec<NotificationType> {
+    vec![
+        NotificationType::TaskAssigned,
+        NotificationType::AssigneeChanged,
+        NotificationType::DueTomorrow,
+        NotificationType::TaskOverdue,
+    ]
 }
 
 impl Serialize for NotificationType {
@@ -266,6 +464,27 @@ fn row_to_record(
             .map_err(|_| NotificationRepositoryError::Database)?,
         dedupe_date: row
             .try_get("dedupe_date")
+            .map_err(|_| NotificationRepositoryError::Database)?,
+    })
+}
+
+fn row_to_rule(
+    row: sqlx::postgres::PgRow,
+) -> Result<NotificationRule, NotificationRepositoryError> {
+    let rule_type: String = row
+        .try_get("rule_type")
+        .map_err(|_| NotificationRepositoryError::Database)?;
+
+    Ok(NotificationRule {
+        rule_type: rule_type.parse()?,
+        enabled: row
+            .try_get("enabled")
+            .map_err(|_| NotificationRepositoryError::Database)?,
+        updated_by: row
+            .try_get("updated_by")
+            .map_err(|_| NotificationRepositoryError::Database)?,
+        updated_at: row
+            .try_get("updated_at")
             .map_err(|_| NotificationRepositoryError::Database)?,
     })
 }

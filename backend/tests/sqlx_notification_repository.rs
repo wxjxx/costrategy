@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use costrategy_backend::auth::UserRole;
 use costrategy_backend::config::AppConfig;
 use costrategy_backend::notifications::{
@@ -19,7 +20,8 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
     let notifications = SqlxNotificationRepository::new(pool.clone());
     let suffix = Uuid::new_v4().simple().to_string();
     let dingtalk_user_id = format!("notification-receiver-{suffix}");
-    cleanup(&pool, &dingtalk_user_id).await;
+    let project_code = format!("NOTIFY-PROJECT-{suffix}");
+    cleanup(&pool, &dingtalk_user_id, &project_code).await;
 
     users
         .upsert_synced_user(NewUser {
@@ -61,7 +63,73 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
         .unwrap();
     assert_eq!(record.content_summary, "新任务分配");
 
-    cleanup(&pool, &dingtalk_user_id).await;
+    let project_id = Uuid::new_v4();
+    let task_id = Uuid::new_v4();
+    sqlx::query(
+        "insert into projects (id, code, name, status, updated_at)
+         values ($1, $2, $3, 'active', now())",
+    )
+    .bind(project_id)
+    .bind(&project_code)
+    .bind("通知测试项目")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into tasks (
+            id, project_id, title, assignee_id, status, priority,
+            start_date, due_date, description_json, creator_id, updated_at
+         )
+         values ($1, $2, '通知去重任务', $3, 'todo', 'medium',
+                 $4, $5, '{}'::jsonb, $3, now())",
+    )
+    .bind(task_id)
+    .bind(project_id)
+    .bind(receiver.id)
+    .bind(NaiveDate::from_ymd_opt(2026, 6, 9).unwrap())
+    .bind(NaiveDate::from_ymd_opt(2026, 6, 10).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let dedupe_date = NaiveDate::from_ymd_opt(2026, 6, 9).unwrap();
+    let reminder_record = notifications
+        .create_record(NewNotificationRecord {
+            notification_type: NotificationType::DueTomorrow,
+            receiver_id: receiver.id,
+            task_id: Some(task_id),
+            content_summary: "截止前一天提醒".to_string(),
+            status: NotificationStatus::Success,
+            failure_reason: None,
+            dedupe_date: Some(dedupe_date),
+        })
+        .await
+        .unwrap();
+    assert_eq!(reminder_record.dedupe_date, Some(dedupe_date));
+    assert!(notifications
+        .has_record(
+            NotificationType::DueTomorrow,
+            task_id,
+            receiver.id,
+            dedupe_date
+        )
+        .await
+        .unwrap());
+
+    let rules = notifications.list_rules().await.unwrap();
+    assert_eq!(rules.len(), 4);
+    assert!(rules
+        .iter()
+        .any(|rule| rule.rule_type == NotificationType::TaskOverdue && rule.enabled));
+
+    let updated_rule = notifications
+        .update_rule(NotificationType::TaskOverdue, false, receiver.id)
+        .await
+        .unwrap();
+    assert_eq!(updated_rule.rule_type, NotificationType::TaskOverdue);
+    assert!(!updated_rule.enabled);
+    assert_eq!(updated_rule.updated_by, Some(receiver.id));
+
+    cleanup(&pool, &dingtalk_user_id, &project_code).await;
 }
 
 async fn test_pool() -> PgPool {
@@ -71,7 +139,15 @@ async fn test_pool() -> PgPool {
     PgPool::connect(&config.database.url()).await.unwrap()
 }
 
-async fn cleanup(pool: &PgPool, dingtalk_user_id: &str) {
+async fn cleanup(pool: &PgPool, dingtalk_user_id: &str, project_code: &str) {
+    sqlx::query(
+        "delete from notification_rules
+         where updated_by in (select id from users where dingtalk_user_id = $1)",
+    )
+    .bind(dingtalk_user_id)
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query(
         "delete from notification_records
          where receiver_id in (select id from users where dingtalk_user_id = $1)",
@@ -80,6 +156,28 @@ async fn cleanup(pool: &PgPool, dingtalk_user_id: &str) {
     .execute(pool)
     .await
     .unwrap();
+    sqlx::query(
+        "delete from notification_records
+         where task_id in (
+            select t.id from tasks t
+            join projects p on p.id = t.project_id
+            where p.code = $1
+         )",
+    )
+    .bind(project_code)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("delete from tasks where project_id in (select id from projects where code = $1)")
+        .bind(project_code)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("delete from projects where code = $1")
+        .bind(project_code)
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("delete from users where dingtalk_user_id = $1")
         .bind(dingtalk_user_id)
         .execute(pool)

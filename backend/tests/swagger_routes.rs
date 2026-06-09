@@ -13,11 +13,28 @@ async fn openapi_json_documents_current_backend_routes() {
     let body: serde_json::Value = test::read_body_json(response).await;
     assert_eq!(body["openapi"], "3.0.3");
     assert_eq!(body["info"]["title"], "项目管理系统 API");
+    assert!(body["paths"]["/api/auth/logout"]["post"].is_object());
     assert!(body["paths"]["/api/tasks"]["get"].is_object());
     assert!(body["paths"]["/api/tasks"]["post"].is_object());
     assert!(body["paths"]["/api/tasks/{task_id}/attachments"]["post"].is_object());
     assert!(body["paths"]["/api/notification-records"]["get"].is_object());
+    assert!(body["paths"]["/api/notification-rules"]["get"].is_object());
+    assert!(body["paths"]["/api/notification-rules/{rule_type}"]["patch"].is_object());
+    assert!(body["paths"]["/api/dingtalk/sync-logs"]["get"].is_object());
+    assert!(body["paths"]["/api/settings"]["get"].is_object());
+    assert!(body["paths"]["/api/settings"]["put"].is_object());
+    assert!(body["components"]["schemas"]["CurrentUser"]["properties"]["departments"].is_object());
+    assert!(body["components"]["schemas"]["CurrentUser"]["properties"]["permissions"].is_object());
     assert!(body["components"]["securitySchemes"]["cookieAuth"].is_object());
+    let task_list_parameters = body["paths"]["/api/tasks"]["get"]["parameters"]
+        .as_array()
+        .expect("task list documents query parameters");
+    assert!(task_list_parameters
+        .iter()
+        .any(|parameter| parameter["name"] == "include_archived"));
+    assert!(task_list_parameters
+        .iter()
+        .any(|parameter| parameter["name"] == "sort"));
 }
 
 #[actix_web::test]

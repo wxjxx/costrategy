@@ -6,7 +6,7 @@ use costrategy_backend::projects::{
 };
 use costrategy_backend::tasks::{
     CreateTask, CreateTaskAttachment, CreateTaskComment, SqlxTaskRepository, TaskFilter,
-    TaskPriority, TaskRepository, TaskStatus,
+    TaskPriority, TaskRepository, TaskSort, TaskStatus,
 };
 use costrategy_backend::users::{NewUser, SqlxUserRepository, UserRepository, UserStatus};
 use serde_json::json;
@@ -68,6 +68,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
         .create_project(CreateProject {
             code: project_code.clone(),
             name: "任务测试项目".to_string(),
+            owner_id: Some(manager.id),
             description: None,
             start_date: Some(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()),
             end_date: Some(NaiveDate::from_ymd_opt(2026, 8, 1).unwrap()),
@@ -93,6 +94,20 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert_eq!(created.status, TaskStatus::Todo);
     assert_eq!(created.project_name.as_deref(), Some("任务测试项目"));
     assert_eq!(created.assignee_name.as_deref(), Some("测试员工"));
+    let low_priority = tasks
+        .create_task(CreateTask {
+            project_id: project.id,
+            title: "低优先级仓储测试".to_string(),
+            assignee_id: assignee.id,
+            status: TaskStatus::Todo,
+            priority: TaskPriority::Low,
+            start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+            due_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+            description_json: json!({"type": "doc", "content": []}),
+            creator_id: manager.id,
+        })
+        .await
+        .unwrap();
 
     let listed = tasks
         .list_tasks(TaskFilter {
@@ -112,6 +127,19 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert_eq!(in_progress.status, TaskStatus::InProgress);
     assert_eq!(in_progress.project_name.as_deref(), Some("任务测试项目"));
     assert_eq!(in_progress.assignee_name.as_deref(), Some("测试员工"));
+    assert_eq!(in_progress.project_owner_id, Some(manager.id));
+    let due_tasks = tasks
+        .list_tasks_due_on(NaiveDate::from_ymd_opt(2026, 6, 10).unwrap())
+        .await
+        .unwrap();
+    assert!(due_tasks.iter().any(|task| task.id == created.id));
+    let overdue_tasks = tasks
+        .list_overdue_tasks(NaiveDate::from_ymd_opt(2026, 6, 11).unwrap())
+        .await
+        .unwrap();
+    assert!(overdue_tasks
+        .iter()
+        .any(|task| task.id == created.id && task.project_owner_id == Some(manager.id)));
 
     let comment = tasks
         .create_comment(CreateTaskComment {
@@ -174,6 +202,18 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert!(!listed_after_archive
         .iter()
         .any(|task| task.id == created.id));
+    let archived_and_sorted = tasks
+        .list_tasks(TaskFilter {
+            project_id: Some(project.id),
+            include_archived: true,
+            sort: TaskSort::Priority,
+            ..TaskFilter::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(archived_and_sorted[0].id, created.id);
+    assert!(archived_and_sorted[0].archived);
+    assert_eq!(archived_and_sorted[1].id, low_priority.id);
 
     let log_count: i64 =
         sqlx::query_scalar("select count(*) from task_activity_logs where task_id = $1")

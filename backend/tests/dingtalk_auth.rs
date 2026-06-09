@@ -1,5 +1,7 @@
 use costrategy_backend::auth::{DingtalkAuthService, UserRole};
-use costrategy_backend::dingtalk::{DingTalkLoginIdentity, MockDingTalkClient};
+use costrategy_backend::dingtalk::{
+    ConfiguredDingTalkClient, DingTalkLoginIdentity, MockDingTalkClient,
+};
 use costrategy_backend::error::ApiErrorCode;
 use costrategy_backend::users::{MemoryUserRepository, NewUser, UserStatus};
 
@@ -90,4 +92,15 @@ async fn dingtalk_login_maps_client_failure_to_stable_error_code() {
 
     assert_eq!(error.status_code().as_u16(), 401);
     assert_eq!(error.code(), ApiErrorCode::AuthDingtalkLoginFailed);
+}
+
+#[tokio::test]
+async fn dingtalk_login_reports_missing_runtime_config() {
+    let users = MemoryUserRepository::default();
+    let service = DingtalkAuthService::new(ConfiguredDingTalkClient::missing(), users);
+
+    let error = service.login_with_code("valid-code").await.unwrap_err();
+
+    assert_eq!(error.status_code().as_u16(), 500);
+    assert_eq!(error.code(), ApiErrorCode::DingtalkConfigMissing);
 }

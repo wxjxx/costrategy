@@ -1,5 +1,6 @@
 use crate::auth::UserRole;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -12,7 +13,7 @@ pub enum UserStatus {
     Disabled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct User {
     pub id: Uuid,
     pub dingtalk_user_id: String,
@@ -22,6 +23,20 @@ pub struct User {
     pub mobile: Option<String>,
     pub role: UserRole,
     pub status: UserStatus,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct UserListItem {
+    pub id: Uuid,
+    pub dingtalk_user_id: String,
+    pub union_id: Option<String>,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub mobile: Option<String>,
+    pub departments: Vec<String>,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +74,7 @@ pub enum SyncUserOutcome {
     Unchanged,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct SyncLogRecord {
     pub status: String,
     pub created_users: usize,
@@ -70,13 +85,19 @@ pub struct SyncLogRecord {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserRepositoryError {
+    #[error("user not found")]
+    NotFound,
     #[error("database operation failed")]
     Database,
 }
 
 #[async_trait]
 pub trait UserRepository: Clone + Send + Sync + 'static {
+    async fn list_users(&self) -> Result<Vec<UserListItem>, UserRepositoryError>;
+
     async fn get_user(&self, id: Uuid) -> Result<Option<User>, UserRepositoryError>;
+
+    async fn list_user_departments(&self, id: Uuid) -> Result<Vec<String>, UserRepositoryError>;
 
     async fn find_by_dingtalk_user_id(
         &self,
@@ -105,6 +126,17 @@ pub trait UserRepository: Clone + Send + Sync + 'static {
     ) -> Result<usize, UserRepositoryError>;
 
     async fn record_sync_log(&self, log: SyncLogRecord) -> Result<(), UserRepositoryError>;
+
+    async fn list_sync_logs(&self) -> Result<Vec<SyncLogRecord>, UserRepositoryError>;
+
+    async fn update_user_role(&self, id: Uuid, role: UserRole)
+        -> Result<User, UserRepositoryError>;
+
+    async fn update_user_status(
+        &self,
+        id: Uuid,
+        status: UserStatus,
+    ) -> Result<User, UserRepositoryError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -189,6 +221,46 @@ impl SqlxUserRepository {
 
 #[async_trait]
 impl UserRepository for MemoryUserRepository {
+    async fn list_users(&self) -> Result<Vec<UserListItem>, UserRepositoryError> {
+        let state = self.inner.lock().expect("memory repository lock");
+        let mut users = state
+            .users_by_dingtalk_id
+            .values()
+            .map(|user| {
+                let mut departments = state
+                    .department_users
+                    .iter()
+                    .filter_map(|(dept_id, user_id)| {
+                        if user_id == &user.dingtalk_user_id {
+                            state
+                                .departments_by_dingtalk_id
+                                .get(dept_id)
+                                .map(|department| department.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                departments.sort();
+
+                UserListItem {
+                    id: user.id,
+                    dingtalk_user_id: user.dingtalk_user_id.clone(),
+                    union_id: user.union_id.clone(),
+                    name: user.name.clone(),
+                    avatar_url: user.avatar_url.clone(),
+                    mobile: user.mobile.clone(),
+                    departments,
+                    role: user.role,
+                    status: user.status,
+                    last_synced_at: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        users.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(users)
+    }
+
     async fn get_user(&self, id: Uuid) -> Result<Option<User>, UserRepositoryError> {
         Ok(self
             .inner
@@ -198,6 +270,33 @@ impl UserRepository for MemoryUserRepository {
             .values()
             .find(|user| user.id == id)
             .cloned())
+    }
+
+    async fn list_user_departments(&self, id: Uuid) -> Result<Vec<String>, UserRepositoryError> {
+        let state = self.inner.lock().expect("memory repository lock");
+        let Some(user) = state
+            .users_by_dingtalk_id
+            .values()
+            .find(|user| user.id == id)
+        else {
+            return Ok(Vec::new());
+        };
+        let mut departments = state
+            .department_users
+            .iter()
+            .filter_map(|(dept_id, dingtalk_user_id)| {
+                if dingtalk_user_id == &user.dingtalk_user_id {
+                    state
+                        .departments_by_dingtalk_id
+                        .get(dept_id)
+                        .map(|department| department.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        departments.sort();
+        Ok(departments)
     }
 
     async fn find_by_dingtalk_user_id(
@@ -314,10 +413,88 @@ impl UserRepository for MemoryUserRepository {
             .push(log);
         Ok(())
     }
+
+    async fn list_sync_logs(&self) -> Result<Vec<SyncLogRecord>, UserRepositoryError> {
+        let logs = self
+            .inner
+            .lock()
+            .expect("memory repository lock")
+            .sync_logs
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
+        Ok(logs)
+    }
+
+    async fn update_user_role(
+        &self,
+        id: Uuid,
+        role: UserRole,
+    ) -> Result<User, UserRepositoryError> {
+        let mut state = self.inner.lock().expect("memory repository lock");
+        let Some(user) = state
+            .users_by_dingtalk_id
+            .values_mut()
+            .find(|user| user.id == id)
+        else {
+            return Err(UserRepositoryError::NotFound);
+        };
+
+        user.role = role;
+        Ok(user.clone())
+    }
+
+    async fn update_user_status(
+        &self,
+        id: Uuid,
+        status: UserStatus,
+    ) -> Result<User, UserRepositoryError> {
+        let mut state = self.inner.lock().expect("memory repository lock");
+        let Some(user) = state
+            .users_by_dingtalk_id
+            .values_mut()
+            .find(|user| user.id == id)
+        else {
+            return Err(UserRepositoryError::NotFound);
+        };
+
+        user.status = status;
+        Ok(user.clone())
+    }
 }
 
 #[async_trait]
 impl UserRepository for SqlxUserRepository {
+    async fn list_users(&self) -> Result<Vec<UserListItem>, UserRepositoryError> {
+        let rows = sqlx::query(
+            "select
+                u.id,
+                u.dingtalk_user_id,
+                u.union_id,
+                u.name,
+                u.avatar_url,
+                u.mobile,
+                u.role,
+                u.status,
+                u.last_synced_at,
+                coalesce(
+                    array_remove(array_agg(d.name order by d.order_no nulls last, d.name), null),
+                    array[]::text[]
+                ) as departments
+             from users u
+             left join department_users du on du.user_id = u.id
+             left join departments d on d.id = du.department_id
+             group by u.id
+             order by u.name asc",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)?;
+
+        rows.into_iter().map(row_to_user_list_item).collect()
+    }
+
     async fn get_user(&self, id: Uuid) -> Result<Option<User>, UserRepositoryError> {
         let row = sqlx::query(
             "select id, dingtalk_user_id, union_id, name, avatar_url, mobile, role, status
@@ -330,6 +507,20 @@ impl UserRepository for SqlxUserRepository {
         .map_err(|_| UserRepositoryError::Database)?;
 
         row.map(row_to_user).transpose()
+    }
+
+    async fn list_user_departments(&self, id: Uuid) -> Result<Vec<String>, UserRepositoryError> {
+        sqlx::query_scalar::<_, String>(
+            "select d.name
+             from department_users du
+             join departments d on d.id = du.department_id
+             where du.user_id = $1
+             order by d.order_no nulls last, d.name",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)
     }
 
     async fn find_by_dingtalk_user_id(
@@ -540,6 +731,84 @@ impl UserRepository for SqlxUserRepository {
 
         Ok(())
     }
+
+    async fn list_sync_logs(&self) -> Result<Vec<SyncLogRecord>, UserRepositoryError> {
+        let rows = sqlx::query(
+            "select status, created_users, updated_users, disabled_users, failure_reason
+             from dingtalk_sync_logs
+             order by started_at desc",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(SyncLogRecord {
+                    status: row
+                        .try_get("status")
+                        .map_err(|_| UserRepositoryError::Database)?,
+                    created_users: i32_to_usize(
+                        row.try_get("created_users")
+                            .map_err(|_| UserRepositoryError::Database)?,
+                    )?,
+                    updated_users: i32_to_usize(
+                        row.try_get("updated_users")
+                            .map_err(|_| UserRepositoryError::Database)?,
+                    )?,
+                    disabled_users: i32_to_usize(
+                        row.try_get("disabled_users")
+                            .map_err(|_| UserRepositoryError::Database)?,
+                    )?,
+                    failure_reason: row
+                        .try_get("failure_reason")
+                        .map_err(|_| UserRepositoryError::Database)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn update_user_role(
+        &self,
+        id: Uuid,
+        role: UserRole,
+    ) -> Result<User, UserRepositoryError> {
+        let row = sqlx::query(
+            "update users set role = $2, updated_at = now()
+             where id = $1
+             returning id, dingtalk_user_id, union_id, name, avatar_url, mobile, role, status",
+        )
+        .bind(id)
+        .bind(role.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)?;
+
+        row.map(row_to_user)
+            .transpose()?
+            .ok_or(UserRepositoryError::NotFound)
+    }
+
+    async fn update_user_status(
+        &self,
+        id: Uuid,
+        status: UserStatus,
+    ) -> Result<User, UserRepositoryError> {
+        let row = sqlx::query(
+            "update users set status = $2, updated_at = now()
+             where id = $1
+             returning id, dingtalk_user_id, union_id, name, avatar_url, mobile, role, status",
+        )
+        .bind(id)
+        .bind(status.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)?;
+
+        row.map(row_to_user)
+            .transpose()?
+            .ok_or(UserRepositoryError::NotFound)
+    }
 }
 
 impl UserStatus {
@@ -548,6 +817,25 @@ impl UserStatus {
             Self::Active => "active",
             Self::Disabled => "disabled",
         }
+    }
+}
+
+impl serde::Serialize for UserStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for UserStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -593,4 +881,46 @@ fn row_to_user(row: sqlx::postgres::PgRow) -> Result<User, UserRepositoryError> 
         role: role.parse().map_err(|_| UserRepositoryError::Database)?,
         status: status.parse()?,
     })
+}
+
+fn row_to_user_list_item(row: sqlx::postgres::PgRow) -> Result<UserListItem, UserRepositoryError> {
+    let role: String = row
+        .try_get("role")
+        .map_err(|_| UserRepositoryError::Database)?;
+    let status: String = row
+        .try_get("status")
+        .map_err(|_| UserRepositoryError::Database)?;
+
+    Ok(UserListItem {
+        id: row
+            .try_get("id")
+            .map_err(|_| UserRepositoryError::Database)?,
+        dingtalk_user_id: row
+            .try_get("dingtalk_user_id")
+            .map_err(|_| UserRepositoryError::Database)?,
+        union_id: row
+            .try_get("union_id")
+            .map_err(|_| UserRepositoryError::Database)?,
+        name: row
+            .try_get("name")
+            .map_err(|_| UserRepositoryError::Database)?,
+        avatar_url: row
+            .try_get("avatar_url")
+            .map_err(|_| UserRepositoryError::Database)?,
+        mobile: row
+            .try_get("mobile")
+            .map_err(|_| UserRepositoryError::Database)?,
+        departments: row
+            .try_get("departments")
+            .map_err(|_| UserRepositoryError::Database)?,
+        role: role.parse().map_err(|_| UserRepositoryError::Database)?,
+        status: status.parse()?,
+        last_synced_at: row
+            .try_get("last_synced_at")
+            .map_err(|_| UserRepositoryError::Database)?,
+    })
+}
+
+fn i32_to_usize(value: i32) -> Result<usize, UserRepositoryError> {
+    usize::try_from(value).map_err(|_| UserRepositoryError::Database)
 }

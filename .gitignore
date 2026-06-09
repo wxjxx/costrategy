@@ -6,3 +6,4 @@ local_ENV
 backend/target/
 frontend/node_modules/
 frontend/dist/
+.codegraph/

@@ -1,18 +1,26 @@
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, DingtalkAuthService, Permission, SESSION_COOKIE_NAME};
+use crate::config::AppConfig;
 use crate::dingtalk::{DingTalkClient, DingtalkSyncService};
 use crate::error::{ApiErrorCode, AppError};
-use crate::notifications::{NotificationRepository, TaskNotificationService};
+use crate::notifications::{
+    NotificationRepository, NotificationRepositoryError, NotificationType, TaskNotificationService,
+};
 use crate::projects::{
     CreateProject, ProjectRepository, ProjectRepositoryError, ProjectStatus, UpdateProject,
+};
+use crate::settings::{
+    build_settings_response, validate_updates, SettingsRepository, SettingsRepositoryError,
+    SettingsUpdate,
 };
 use crate::storage::{AttachmentStorage, StorageError};
 use crate::tasks::{
     CreateTask, CreateTaskAttachment, CreateTaskComment, TaskFilter, TaskPriority, TaskRepository,
-    TaskRepositoryError, TaskStatus, UpdateTask,
+    TaskRepositoryError, TaskSort, TaskStatus, UpdateTask,
 };
-use crate::users::UserRepository;
+use crate::users::{UserRepository, UserRepositoryError, UserStatus};
 use actix_multipart::Multipart;
+use actix_web::cookie::time::Duration;
 use actix_web::cookie::{Cookie, SameSite};
 use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
 use futures_util::StreamExt;
@@ -34,10 +42,15 @@ where
     configure(config);
     config
         .route("/api/auth/dingtalk/login", web::post().to(login::<C, R>))
+        .route("/api/auth/logout", web::post().to(logout::<C, R>))
         .route("/api/me", web::get().to(me::<C, R>))
         .route(
             "/api/dingtalk/sync",
             web::post().to(sync_dingtalk_contacts::<C, R>),
+        )
+        .route(
+            "/api/dingtalk/sync-logs",
+            web::get().to(list_dingtalk_sync_logs::<C, R>),
         );
 }
 
@@ -58,6 +71,34 @@ where
             "/api/projects/{project_id}/archive",
             web::post().to(archive_project::<C, R, P>),
         );
+}
+
+pub fn configure_user_routes<C, R>(config: &mut web::ServiceConfig)
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    config
+        .route("/api/users", web::get().to(list_users::<C, R>))
+        .route(
+            "/api/users/{user_id}/role",
+            web::patch().to(update_user_role::<C, R>),
+        )
+        .route(
+            "/api/users/{user_id}/status",
+            web::patch().to(update_user_status::<C, R>),
+        );
+}
+
+pub fn configure_settings_routes<C, R, S>(config: &mut web::ServiceConfig)
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    S: SettingsRepository,
+{
+    config
+        .route("/api/settings", web::get().to(get_settings::<C, R, S>))
+        .route("/api/settings", web::put().to(update_settings::<C, R, S>));
 }
 
 pub fn configure_task_routes<C, R, T, N>(config: &mut web::ServiceConfig)
@@ -120,10 +161,19 @@ where
     R: UserRepository,
     N: NotificationRepository,
 {
-    config.route(
-        "/api/notification-records",
-        web::get().to(list_notification_records::<C, R, N>),
-    );
+    config
+        .route(
+            "/api/notification-records",
+            web::get().to(list_notification_records::<C, R, N>),
+        )
+        .route(
+            "/api/notification-rules",
+            web::get().to(list_notification_rules::<C, R, N>),
+        )
+        .route(
+            "/api/notification-rules/{rule_type}",
+            web::patch().to(update_notification_rule::<C, R, N>),
+        );
 }
 
 #[derive(Serialize)]
@@ -161,6 +211,38 @@ where
     Ok(HttpResponse::Ok().cookie(cookie).json(current_user))
 }
 
+async fn logout<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    let Some(cookie) = request.cookie(SESSION_COOKIE_NAME) else {
+        return Err(AppError::new(
+            actix_web::http::StatusCode::UNAUTHORIZED,
+            ApiErrorCode::AuthNotLogin,
+        ));
+    };
+
+    if state.sessions.remove(cookie.value()).is_none() {
+        return Err(AppError::new(
+            actix_web::http::StatusCode::UNAUTHORIZED,
+            ApiErrorCode::AuthNotLogin,
+        ));
+    }
+
+    let cleared_cookie = Cookie::build(SESSION_COOKIE_NAME, "")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(Duration::seconds(0))
+        .finish();
+
+    Ok(HttpResponse::Ok().cookie(cleared_cookie).finish())
+}
+
 async fn me<C, R>(
     state: web::Data<AppState<C, R>>,
     request: HttpRequest,
@@ -190,6 +272,28 @@ where
     Ok(HttpResponse::Ok().json(service.sync_contacts().await?))
 }
 
+async fn list_dingtalk_sync_logs<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    if !current_user.role.has(Permission::RunDingtalkSync) {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+
+    Ok(HttpResponse::Ok().json(
+        state
+            .users
+            .list_sync_logs()
+            .await
+            .map_err(user_error_to_app)?,
+    ))
+}
+
 fn require_current_user<C, R>(
     state: &web::Data<AppState<C, R>>,
     request: &HttpRequest,
@@ -217,6 +321,7 @@ where
 struct CreateProjectRequest {
     code: String,
     name: String,
+    owner_id: Option<Uuid>,
     description: Option<String>,
     start_date: Option<chrono::NaiveDate>,
     end_date: Option<chrono::NaiveDate>,
@@ -226,10 +331,150 @@ struct CreateProjectRequest {
 #[derive(Debug, serde::Deserialize)]
 struct UpdateProjectRequest {
     name: String,
+    owner_id: Option<Uuid>,
     description: Option<String>,
     start_date: Option<chrono::NaiveDate>,
     end_date: Option<chrono::NaiveDate>,
     status: ProjectStatus,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateUserRoleRequest {
+    role: crate::auth::UserRole,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateUserStatusRequest {
+    status: UserStatus,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SettingsUpdateRequest {
+    settings: Vec<SettingsUpdateItemRequest>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SettingsUpdateItemRequest {
+    key: String,
+    value: String,
+}
+
+async fn list_users<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    require_admin(&state, &request, Permission::ManageUsers)?;
+    Ok(HttpResponse::Ok().json(state.users.list_users().await.map_err(user_error_to_app)?))
+}
+
+async fn update_user_role<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+    path: web::Path<Uuid>,
+    payload: web::Json<UpdateUserRoleRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    require_admin(&state, &request, Permission::ManageUsers)?;
+    Ok(HttpResponse::Ok().json(
+        state
+            .users
+            .update_user_role(path.into_inner(), payload.role)
+            .await
+            .map_err(user_error_to_app)?,
+    ))
+}
+
+async fn update_user_status<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+    path: web::Path<Uuid>,
+    payload: web::Json<UpdateUserStatusRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    require_admin(&state, &request, Permission::ManageUsers)?;
+    Ok(HttpResponse::Ok().json(
+        state
+            .users
+            .update_user_status(path.into_inner(), payload.status)
+            .await
+            .map_err(user_error_to_app)?,
+    ))
+}
+
+async fn get_settings<C, R, S>(
+    state: web::Data<AppState<C, R>>,
+    settings: web::Data<S>,
+    config: web::Data<AppConfig>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    S: SettingsRepository,
+{
+    require_admin(&state, &request, Permission::ManageSystemSettings)?;
+    let stored = settings
+        .list_settings()
+        .await
+        .map_err(settings_error_to_app)?;
+    Ok(HttpResponse::Ok().json(build_settings_response(stored, &config)))
+}
+
+async fn update_settings<C, R, S>(
+    state: web::Data<AppState<C, R>>,
+    settings: web::Data<S>,
+    config: web::Data<AppConfig>,
+    request: HttpRequest,
+    payload: web::Json<SettingsUpdateRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    S: SettingsRepository,
+{
+    let current_user = require_admin(&state, &request, Permission::ManageSystemSettings)?;
+    let updates = payload
+        .settings
+        .iter()
+        .map(|item| SettingsUpdate {
+            key: item.key.clone(),
+            value: item.value.clone(),
+            updated_by: current_user.id,
+        })
+        .collect::<Vec<_>>();
+    validate_updates(&updates).map_err(settings_error_to_app)?;
+    let stored = settings
+        .upsert_settings(updates)
+        .await
+        .map_err(settings_error_to_app)?;
+
+    Ok(HttpResponse::Ok().json(build_settings_response(stored, &config)))
+}
+
+fn require_admin<C, R>(
+    state: &web::Data<AppState<C, R>>,
+    request: &HttpRequest,
+    permission: Permission,
+) -> Result<CurrentUser, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    let current_user = require_current_user(state, request)?;
+    if !current_user.role.has(permission) {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+    Ok(current_user)
 }
 
 async fn list_projects<C, R, P>(
@@ -268,6 +513,7 @@ where
             .create_project(CreateProject {
                 code: payload.code.trim().to_string(),
                 name: payload.name.trim().to_string(),
+                owner_id: payload.owner_id,
                 description: payload.description.clone(),
                 start_date: payload.start_date,
                 end_date: payload.end_date,
@@ -297,6 +543,7 @@ where
                 path.into_inner(),
                 UpdateProject {
                     name: payload.name.trim().to_string(),
+                    owner_id: payload.owner_id,
                     description: payload.description.clone(),
                     start_date: payload.start_date,
                     end_date: payload.end_date,
@@ -353,6 +600,34 @@ fn project_error_to_app(error: ProjectRepositoryError) -> AppError {
     }
 }
 
+fn user_error_to_app(error: UserRepositoryError) -> AppError {
+    match error {
+        UserRepositoryError::NotFound => AppError::new(
+            actix_web::http::StatusCode::NOT_FOUND,
+            ApiErrorCode::ResourceNotFound,
+        ),
+        UserRepositoryError::Database => AppError::internal(ApiErrorCode::DatabaseError),
+    }
+}
+
+fn notification_error_to_app(error: NotificationRepositoryError) -> AppError {
+    match error {
+        NotificationRepositoryError::Validation => {
+            AppError::bad_request(ApiErrorCode::ValidationFailed)
+        }
+        NotificationRepositoryError::Database => AppError::internal(ApiErrorCode::DatabaseError),
+    }
+}
+
+fn settings_error_to_app(error: SettingsRepositoryError) -> AppError {
+    match error {
+        SettingsRepositoryError::Validation => {
+            AppError::bad_request(ApiErrorCode::ValidationFailed)
+        }
+        SettingsRepositoryError::Database => AppError::internal(ApiErrorCode::DatabaseError),
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct TaskQuery {
     keyword: Option<String>,
@@ -362,6 +637,8 @@ struct TaskQuery {
     priority: Option<TaskPriority>,
     date_from: Option<chrono::NaiveDate>,
     date_to: Option<chrono::NaiveDate>,
+    include_archived: Option<bool>,
+    sort: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -416,6 +693,12 @@ where
     T: TaskRepository,
 {
     require_current_user(&state, &request)?;
+    let sort = query
+        .sort
+        .as_deref()
+        .unwrap_or(TaskSort::default().as_str())
+        .parse::<TaskSort>()
+        .map_err(|_| AppError::bad_request(ApiErrorCode::ValidationFailed))?;
     Ok(HttpResponse::Ok().json(
         tasks
             .list_tasks(TaskFilter {
@@ -426,6 +709,8 @@ where
                 priority: query.priority,
                 date_from: query.date_from,
                 date_to: query.date_to,
+                include_archived: query.include_archived.unwrap_or(false),
+                sort,
             })
             .await
             .map_err(task_error_to_app)?,
@@ -599,6 +884,63 @@ where
             .list_records()
             .await
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateNotificationRuleRequest {
+    enabled: bool,
+}
+
+async fn list_notification_rules<C, R, N>(
+    state: web::Data<AppState<C, R>>,
+    notifications: web::Data<N>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    N: NotificationRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    if !current_user.role.has(Permission::ManageSystemSettings) {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+
+    Ok(HttpResponse::Ok().json(
+        notifications
+            .list_rules()
+            .await
+            .map_err(notification_error_to_app)?,
+    ))
+}
+
+async fn update_notification_rule<C, R, N>(
+    state: web::Data<AppState<C, R>>,
+    notifications: web::Data<N>,
+    request: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Json<UpdateNotificationRuleRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    N: NotificationRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    if !current_user.role.has(Permission::ManageSystemSettings) {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+    let rule_type = path
+        .as_str()
+        .parse::<NotificationType>()
+        .map_err(|_| AppError::bad_request(ApiErrorCode::ValidationFailed))?;
+
+    Ok(HttpResponse::Ok().json(
+        notifications
+            .update_rule(rule_type, payload.enabled, current_user.id)
+            .await
+            .map_err(notification_error_to_app)?,
     ))
 }
 

@@ -59,6 +59,27 @@ async fn sqlx_user_repository_upserts_contacts_and_sync_log() {
     assert_eq!(found.role, UserRole::Employee);
     assert_eq!(found.status, UserStatus::Active);
 
+    let listed = repo.list_users().await.unwrap();
+    let list_item = listed
+        .iter()
+        .find(|user| user.dingtalk_user_id == user_id)
+        .unwrap();
+    assert_eq!(list_item.name, "测试用户更新");
+    assert_eq!(list_item.mobile.as_deref(), Some("13900000000"));
+    assert_eq!(list_item.role, UserRole::Employee);
+
+    let role_updated = repo
+        .update_user_role(found.id, UserRole::Manager)
+        .await
+        .unwrap();
+    assert_eq!(role_updated.role, UserRole::Manager);
+
+    let status_updated = repo
+        .update_user_status(found.id, UserStatus::Disabled)
+        .await
+        .unwrap();
+    assert_eq!(status_updated.status, UserStatus::Disabled);
+
     repo.upsert_department(NewDepartment {
         dingtalk_dept_id: department_id,
         parent_dingtalk_dept_id: None,
@@ -70,6 +91,8 @@ async fn sqlx_user_repository_upserts_contacts_and_sync_log() {
     repo.replace_department_users(department_id, std::slice::from_ref(&user_id))
         .await
         .unwrap();
+    let departments = repo.list_user_departments(found.id).await.unwrap();
+    assert_eq!(departments, vec!["测试部门"]);
 
     let relation_count: i64 = sqlx::query_scalar(
         "select count(*)
@@ -103,6 +126,13 @@ async fn sqlx_user_repository_upserts_contacts_and_sync_log() {
     })
     .await
     .unwrap();
+    let sync_logs = repo.list_sync_logs().await.unwrap();
+    let sync_log = sync_logs
+        .iter()
+        .find(|log| log.created_users == 1 && log.updated_users == 1)
+        .unwrap();
+    assert_eq!(sync_log.status, "success");
+    assert_eq!(sync_log.disabled_users, 0);
 
     cleanup(&pool, &user_id, department_id).await;
 }

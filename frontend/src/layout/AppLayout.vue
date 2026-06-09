@@ -20,6 +20,8 @@ const props = withDefaults(
       id: 'guest',
       name: '未登录',
       role: 'employee',
+      departments: [],
+      permissions: [],
     }),
   },
 );

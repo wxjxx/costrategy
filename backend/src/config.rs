@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct AppConfig {
     pub database: DatabaseConfig,
     pub rustfs: RustfsConfig,
+    pub dingtalk: Option<DingtalkConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +25,15 @@ pub struct RustfsConfig {
     pub bucket: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DingtalkConfig {
+    pub corp_id: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub agent_id: i64,
+    pub oapi_base_url: String,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -51,6 +61,11 @@ struct ParsedConfig {
     rustfs_bucket: Option<String>,
     rustfs_access_key: Option<String>,
     rustfs_secret_key: Option<String>,
+    dingtalk_corp_id: Option<String>,
+    dingtalk_client_id: Option<String>,
+    dingtalk_client_secret: Option<String>,
+    dingtalk_agent_id: Option<String>,
+    dingtalk_oapi_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +73,7 @@ enum Section {
     None,
     PostgreSql,
     Rustfs,
+    Dingtalk,
 }
 
 impl AppConfig {
@@ -132,6 +148,7 @@ impl AppConfig {
             match section {
                 Section::PostgreSql => read_postgresql_line(line, &mut parsed),
                 Section::Rustfs => read_rustfs_line(line, &mut parsed),
+                Section::Dingtalk => read_dingtalk_line(line, &mut parsed),
                 Section::None => read_standard_env_line(line, &mut parsed),
             }
         }
@@ -157,6 +174,34 @@ impl AppConfig {
         let access_key_id = required(parsed.rustfs_access_key, "rustfs.access_key", &mut missing);
         let secret_access_key =
             required(parsed.rustfs_secret_key, "rustfs.secret_key", &mut missing);
+        let dingtalk_configured = parsed.dingtalk_corp_id.is_some()
+            || parsed.dingtalk_client_id.is_some()
+            || parsed.dingtalk_client_secret.is_some()
+            || parsed.dingtalk_agent_id.is_some()
+            || parsed.dingtalk_oapi_base_url.is_some();
+        let dingtalk = if dingtalk_configured {
+            let corp_id = required(parsed.dingtalk_corp_id, "dingtalk.corp_id", &mut missing);
+            let client_id = required(
+                parsed.dingtalk_client_id,
+                "dingtalk.client_id",
+                &mut missing,
+            );
+            let client_secret = required(
+                parsed.dingtalk_client_secret,
+                "dingtalk.client_secret",
+                &mut missing,
+            );
+            let agent_id = required(parsed.dingtalk_agent_id, "dingtalk.agent_id", &mut missing);
+            Some((
+                corp_id,
+                client_id,
+                client_secret,
+                agent_id,
+                parsed.dingtalk_oapi_base_url,
+            ))
+        } else {
+            None
+        };
 
         if !missing.is_empty() {
             return Err(ConfigError::MissingFields(missing.join(", ")));
@@ -169,6 +214,30 @@ impl AppConfig {
                 field: "postgresql.port",
                 message: err.to_string(),
             })?;
+        let dingtalk = dingtalk
+            .map(
+                |(corp_id, client_id, client_secret, agent_id, oapi_base_url)| {
+                    let agent_id =
+                        agent_id
+                            .expect("checked missing")
+                            .parse::<i64>()
+                            .map_err(|err| ConfigError::InvalidField {
+                                field: "dingtalk.agent_id",
+                                message: err.to_string(),
+                            })?;
+
+                    Ok(DingtalkConfig {
+                        corp_id: corp_id.expect("checked missing"),
+                        client_id: client_id.expect("checked missing"),
+                        client_secret: client_secret.expect("checked missing"),
+                        agent_id,
+                        oapi_base_url: oapi_base_url
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or_else(|| "https://oapi.dingtalk.com".to_string()),
+                    })
+                },
+            )
+            .transpose()?;
 
         Ok(Self {
             database: DatabaseConfig {
@@ -185,6 +254,7 @@ impl AppConfig {
                 access_key_id: access_key_id.expect("checked missing"),
                 secret_access_key: secret_access_key.expect("checked missing"),
             },
+            dingtalk,
         })
     }
 }
@@ -233,6 +303,8 @@ fn detect_section(comment: &str) -> Section {
         Section::PostgreSql
     } else if normalized.contains("rustfs") {
         Section::Rustfs
+    } else if normalized.contains("dingtalk") || normalized.contains("ding_talk") {
+        Section::Dingtalk
     } else {
         Section::None
     }
@@ -270,6 +342,20 @@ fn read_rustfs_line(line: &str, parsed: &mut ParsedConfig) {
     }
 }
 
+fn read_dingtalk_line(line: &str, parsed: &mut ParsedConfig) {
+    if let Some(value) = read_known_key(line, &["Client Secret", "ClientSecret"]) {
+        parsed.dingtalk_client_secret = Some(value);
+    } else if let Some(value) = read_known_key(line, &["Client ID", "ClientId", "App Key"]) {
+        parsed.dingtalk_client_id = Some(value);
+    } else if let Some(value) = read_known_key(line, &["Corp ID", "CorpId"]) {
+        parsed.dingtalk_corp_id = Some(value);
+    } else if let Some(value) = read_known_key(line, &["Agent ID", "AgentId"]) {
+        parsed.dingtalk_agent_id = Some(value);
+    } else if let Some(value) = read_known_key(line, &["OAPI Base URL", "OapiBaseUrl"]) {
+        parsed.dingtalk_oapi_base_url = Some(value);
+    }
+}
+
 fn read_standard_env_line(line: &str, parsed: &mut ParsedConfig) {
     if let Some((key, value)) = split_config_line(line) {
         read_standard_env_pair(&key, value, parsed);
@@ -299,6 +385,13 @@ fn read_standard_env_pair(key: &str, value: String, parsed: &mut ParsedConfig) {
         "rustfs_bucket" => parsed.rustfs_bucket = Some(value),
         "rustfs_access_key_id" => parsed.rustfs_access_key = Some(value),
         "rustfs_secret_access_key" => parsed.rustfs_secret_key = Some(value),
+        "dingtalk_corp_id" => parsed.dingtalk_corp_id = Some(value),
+        "dingtalk_client_id" | "dingtalk_app_key" => parsed.dingtalk_client_id = Some(value),
+        "dingtalk_client_secret" | "dingtalk_app_secret" => {
+            parsed.dingtalk_client_secret = Some(value)
+        }
+        "dingtalk_agent_id" => parsed.dingtalk_agent_id = Some(value),
+        "dingtalk_oapi_base_url" => parsed.dingtalk_oapi_base_url = Some(value),
         _ => {}
     }
 }

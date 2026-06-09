@@ -27,4 +27,11 @@ impl SessionStore {
             .get(token)
             .cloned()
     }
+
+    pub fn remove(&self, token: &str) -> Option<CurrentUser> {
+        self.sessions
+            .lock()
+            .expect("session store lock")
+            .remove(token)
+    }
 }

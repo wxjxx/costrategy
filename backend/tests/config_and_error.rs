@@ -14,6 +14,10 @@ fn parses_standard_environment_variables() {
         ("RUSTFS_BUCKET", "costrategy-files"),
         ("RUSTFS_ACCESS_KEY_ID", "rustfs-access"),
         ("RUSTFS_SECRET_ACCESS_KEY", "rustfs-secret"),
+        ("DINGTALK_CORP_ID", "ding-corp"),
+        ("DINGTALK_CLIENT_ID", "ding-client"),
+        ("DINGTALK_CLIENT_SECRET", "ding-secret"),
+        ("DINGTALK_AGENT_ID", "123456"),
     ])
     .expect("standard env vars should parse");
 
@@ -27,6 +31,15 @@ fn parses_standard_environment_variables() {
     assert_eq!(config.rustfs.bucket, "costrategy-files");
     assert_eq!(config.rustfs.access_key_id, "rustfs-access");
     assert_eq!(config.rustfs.secret_access_key, "rustfs-secret");
+    let dingtalk = config
+        .dingtalk
+        .as_ref()
+        .expect("dingtalk config should parse when env vars are present");
+    assert_eq!(dingtalk.corp_id, "ding-corp");
+    assert_eq!(dingtalk.client_id, "ding-client");
+    assert_eq!(dingtalk.client_secret, "ding-secret");
+    assert_eq!(dingtalk.agent_id, 123456);
+    assert_eq!(dingtalk.oapi_base_url, "https://oapi.dingtalk.com");
 }
 
 #[test]
@@ -82,6 +95,30 @@ fn later_environment_variables_override_earlier_dotenv_values() {
 
     assert_eq!(config.database.password, "env-secret");
     assert_eq!(config.rustfs.bucket, "env-bucket");
+    assert!(config.dingtalk.is_none());
+}
+
+#[test]
+fn partial_dingtalk_config_reports_missing_fields_without_leaking_secret() {
+    let error = AppConfig::from_env_vars([
+        (
+            "DATABASE_URL",
+            "postgres://task_user:p%40ss%20word@10.0.0.2:5432/costrategy",
+        ),
+        ("RUSTFS_ENDPOINT", "10.0.0.4:9000"),
+        ("RUSTFS_REGION", "cn-east-1"),
+        ("RUSTFS_BUCKET", "costrategy-files"),
+        ("RUSTFS_ACCESS_KEY_ID", "rustfs-access"),
+        ("RUSTFS_SECRET_ACCESS_KEY", "rustfs-secret"),
+        ("DINGTALK_CLIENT_SECRET", "ding-secret"),
+    ])
+    .expect_err("partial dingtalk config should fail");
+
+    let message = error.to_string();
+    assert!(message.contains("dingtalk.corp_id"));
+    assert!(message.contains("dingtalk.client_id"));
+    assert!(message.contains("dingtalk.agent_id"));
+    assert!(!message.contains("ding-secret"));
 }
 
 #[test]

@@ -3,8 +3,9 @@ use crate::error::{ApiErrorCode, AppError};
 use crate::notifications::{
     NewNotificationRecord, NotificationRepository, NotificationStatus, NotificationType,
 };
-use crate::tasks::Task;
+use crate::tasks::{Task, TaskRepository};
 use crate::users::{User, UserRepository, UserStatus};
+use chrono::NaiveDate;
 
 #[derive(Debug, Clone)]
 pub struct TaskNotificationService<C, U, N> {
@@ -97,6 +98,158 @@ where
                 status,
                 failure_reason,
                 dedupe_date: None,
+            })
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReminderNotificationService<C, U, N, T> {
+    dingtalk: C,
+    users: U,
+    notifications: N,
+    tasks: T,
+}
+
+impl<C, U, N, T> ReminderNotificationService<C, U, N, T>
+where
+    C: DingTalkClient,
+    U: UserRepository,
+    N: NotificationRepository,
+    T: TaskRepository,
+{
+    pub fn new(dingtalk: C, users: U, notifications: N, tasks: T) -> Self {
+        Self {
+            dingtalk,
+            users,
+            notifications,
+            tasks,
+        }
+    }
+
+    pub async fn notify_due_tomorrow(&self, local_date: NaiveDate) -> Result<(), AppError> {
+        if !self.rule_enabled(NotificationType::DueTomorrow).await? {
+            return Ok(());
+        }
+        let Some(due_date) = local_date.succ_opt() else {
+            return Ok(());
+        };
+        let tasks = self
+            .tasks
+            .list_tasks_due_on(due_date)
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
+
+        for task in tasks {
+            self.notify_task_receiver_once(
+                NotificationType::DueTomorrow,
+                "截止前一天提醒",
+                &task,
+                task.assignee_id,
+                local_date,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn notify_overdue(&self, local_date: NaiveDate) -> Result<(), AppError> {
+        if !self.rule_enabled(NotificationType::TaskOverdue).await? {
+            return Ok(());
+        }
+        let tasks = self
+            .tasks
+            .list_overdue_tasks(local_date)
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
+
+        for task in tasks {
+            self.notify_task_receiver_once(
+                NotificationType::TaskOverdue,
+                "任务延期",
+                &task,
+                task.assignee_id,
+                local_date,
+            )
+            .await?;
+            if let Some(owner_id) = task.project_owner_id {
+                self.notify_task_receiver_once(
+                    NotificationType::TaskOverdue,
+                    "任务延期",
+                    &task,
+                    owner_id,
+                    local_date,
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn rule_enabled(&self, notification_type: NotificationType) -> Result<bool, AppError> {
+        Ok(self
+            .notifications
+            .list_rules()
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?
+            .into_iter()
+            .find(|rule| rule.rule_type == notification_type)
+            .is_none_or(|rule| rule.enabled))
+    }
+
+    async fn notify_task_receiver_once(
+        &self,
+        notification_type: NotificationType,
+        action: &str,
+        task: &Task,
+        receiver_id: uuid::Uuid,
+        dedupe_date: NaiveDate,
+    ) -> Result<(), AppError> {
+        let Some(receiver) = self
+            .users
+            .get_user(receiver_id)
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?
+        else {
+            return Ok(());
+        };
+        if receiver.status != UserStatus::Active {
+            return Ok(());
+        }
+
+        let already_sent = self
+            .notifications
+            .has_record(notification_type, task.id, receiver.id, dedupe_date)
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
+        if already_sent {
+            return Ok(());
+        }
+
+        let message = build_task_message(action, task);
+        let send_result = self
+            .dingtalk
+            .send_work_notification(&receiver.dingtalk_user_id, &message)
+            .await;
+        let (status, failure_reason) = match send_result {
+            Ok(()) => (NotificationStatus::Success, None),
+            Err(_) => (
+                NotificationStatus::Failed,
+                Some("dingtalk notification failed".to_string()),
+            ),
+        };
+
+        self.notifications
+            .create_record(NewNotificationRecord {
+                notification_type,
+                receiver_id: receiver.id,
+                task_id: Some(task.id),
+                content_summary: message,
+                status,
+                failure_reason,
+                dedupe_date: Some(dedupe_date),
             })
             .await
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;

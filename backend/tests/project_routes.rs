@@ -57,7 +57,7 @@ async fn employee_cannot_create_project() {
         test::TestRequest::post()
             .uri("/api/projects")
             .cookie(cookie)
-            .set_json(project_payload())
+            .set_json(project_payload(None))
             .to_request(),
     )
     .await;
@@ -70,7 +70,7 @@ async fn employee_cannot_create_project() {
 #[actix_web::test]
 async fn manager_can_create_update_list_and_archive_project() {
     let users = MemoryUserRepository::default();
-    users
+    let manager = users
         .insert_user(NewUser {
             dingtalk_user_id: "manager".to_string(),
             union_id: None,
@@ -96,7 +96,7 @@ async fn manager_can_create_update_list_and_archive_project() {
         test::TestRequest::post()
             .uri("/api/projects")
             .cookie(cookie.clone())
-            .set_json(project_payload())
+            .set_json(project_payload(Some(manager.id)))
             .to_request(),
     )
     .await;
@@ -104,6 +104,7 @@ async fn manager_can_create_update_list_and_archive_project() {
     let created: serde_json::Value = test::read_body_json(create_response).await;
     assert_eq!(created["code"], "PM-001");
     assert_eq!(created["status"], "active");
+    assert_eq!(created["owner_id"], manager.id.to_string());
     let project_id = created["id"].as_str().unwrap();
 
     let update_response = test::call_service(
@@ -114,6 +115,7 @@ async fn manager_can_create_update_list_and_archive_project() {
             .set_json(json!({
                 "name": "项目管理系统一期",
                 "description": "更新后的描述",
+                "owner_id": null,
                 "start_date": "2026-06-01",
                 "end_date": "2026-08-01",
                 "status": "paused"
@@ -125,6 +127,7 @@ async fn manager_can_create_update_list_and_archive_project() {
     let updated: serde_json::Value = test::read_body_json(update_response).await;
     assert_eq!(updated["name"], "项目管理系统一期");
     assert_eq!(updated["status"], "paused");
+    assert!(updated["owner_id"].is_null());
 
     let list_response = test::call_service(
         &app,
@@ -205,11 +208,12 @@ where
         .into_owned()
 }
 
-fn project_payload() -> serde_json::Value {
+fn project_payload(owner_id: Option<uuid::Uuid>) -> serde_json::Value {
     json!({
         "code": "PM-001",
         "name": "项目管理系统",
         "description": "第一版项目管理系统",
+        "owner_id": owner_id,
         "start_date": NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
         "end_date": NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         "status": "active"

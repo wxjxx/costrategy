@@ -2,9 +2,15 @@ use actix_web::{web, App, HttpServer};
 use costrategy_backend::app_state::AppState;
 use costrategy_backend::auth::SessionStore;
 use costrategy_backend::config::AppConfig;
-use costrategy_backend::dingtalk::MockDingTalkClient;
-use costrategy_backend::notifications::SqlxNotificationRepository;
+use costrategy_backend::dingtalk::{
+    start_contact_sync_scheduler, ConfiguredDingTalkClient, DingtalkSyncService,
+};
+use costrategy_backend::notifications::{
+    start_due_tomorrow_scheduler, start_overdue_scheduler, ReminderNotificationService,
+    SqlxNotificationRepository,
+};
 use costrategy_backend::projects::SqlxProjectRepository;
+use costrategy_backend::settings::SqlxSettingsRepository;
 use costrategy_backend::storage::RustfsAttachmentStorage;
 use costrategy_backend::tasks::SqlxTaskRepository;
 use costrategy_backend::users::SqlxUserRepository;
@@ -15,17 +21,31 @@ async fn main() -> std::io::Result<()> {
     let pool = sqlx::PgPool::connect(&config.database.url())
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    let app_state = AppState::new(
-        MockDingTalkClient::default(),
-        SqlxUserRepository::new(pool.clone()),
-        SessionStore::default(),
-    );
+    let dingtalk_configured = config.dingtalk.is_some();
+    let dingtalk = ConfiguredDingTalkClient::from_config(config.dingtalk.clone());
+    let users = SqlxUserRepository::new(pool.clone());
+    let app_state = AppState::new(dingtalk.clone(), users.clone(), SessionStore::default());
     let projects = SqlxProjectRepository::new(pool.clone());
     let tasks = SqlxTaskRepository::new(pool.clone());
-    let notifications = SqlxNotificationRepository::new(pool);
+    let notifications = SqlxNotificationRepository::new(pool.clone());
+    let settings = SqlxSettingsRepository::new(pool);
     let storage = RustfsAttachmentStorage::from_config(&config.rustfs)
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let _background_schedulers = dingtalk_configured.then(|| {
+        let reminder_service = ReminderNotificationService::new(
+            dingtalk.clone(),
+            users.clone(),
+            notifications.clone(),
+            tasks.clone(),
+        );
+        let sync_service = DingtalkSyncService::new(dingtalk.clone(), users.clone());
+        (
+            start_due_tomorrow_scheduler(reminder_service.clone()),
+            start_overdue_scheduler(reminder_service),
+            start_contact_sync_scheduler(sync_service),
+        )
+    });
 
     HttpServer::new(move || {
         App::new()
@@ -34,19 +54,37 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(tasks.clone()))
             .app_data(web::Data::new(notifications.clone()))
             .app_data(web::Data::new(storage.clone()))
+            .app_data(web::Data::new(settings.clone()))
+            .app_data(web::Data::new(config.clone()))
             .configure(
-                costrategy_backend::routes::configure_app::<MockDingTalkClient, SqlxUserRepository>,
+                costrategy_backend::routes::configure_app::<
+                    ConfiguredDingTalkClient,
+                    SqlxUserRepository,
+                >,
             )
             .configure(
                 costrategy_backend::routes::configure_project_routes::<
-                    MockDingTalkClient,
+                    ConfiguredDingTalkClient,
                     SqlxUserRepository,
                     SqlxProjectRepository,
                 >,
             )
             .configure(
+                costrategy_backend::routes::configure_user_routes::<
+                    ConfiguredDingTalkClient,
+                    SqlxUserRepository,
+                >,
+            )
+            .configure(
+                costrategy_backend::routes::configure_settings_routes::<
+                    ConfiguredDingTalkClient,
+                    SqlxUserRepository,
+                    SqlxSettingsRepository,
+                >,
+            )
+            .configure(
                 costrategy_backend::routes::configure_task_routes::<
-                    MockDingTalkClient,
+                    ConfiguredDingTalkClient,
                     SqlxUserRepository,
                     SqlxTaskRepository,
                     SqlxNotificationRepository,
@@ -54,7 +92,7 @@ async fn main() -> std::io::Result<()> {
             )
             .configure(
                 costrategy_backend::routes::configure_attachment_routes::<
-                    MockDingTalkClient,
+                    ConfiguredDingTalkClient,
                     SqlxUserRepository,
                     SqlxTaskRepository,
                     RustfsAttachmentStorage,
@@ -62,7 +100,7 @@ async fn main() -> std::io::Result<()> {
             )
             .configure(
                 costrategy_backend::routes::configure_notification_routes::<
-                    MockDingTalkClient,
+                    ConfiguredDingTalkClient,
                     SqlxUserRepository,
                     SqlxNotificationRepository,
                 >,

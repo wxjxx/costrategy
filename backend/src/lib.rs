@@ -6,6 +6,7 @@ pub mod error;
 pub mod notifications;
 pub mod projects;
 pub mod routes;
+pub mod settings;
 pub mod storage;
 pub mod swagger;
 pub mod tasks;

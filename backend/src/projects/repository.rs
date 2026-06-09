@@ -19,6 +19,7 @@ pub struct Project {
     pub id: Uuid,
     pub code: String,
     pub name: String,
+    pub owner_id: Option<Uuid>,
     pub description: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -29,6 +30,7 @@ pub struct Project {
 pub struct CreateProject {
     pub code: String,
     pub name: String,
+    pub owner_id: Option<Uuid>,
     pub description: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -38,6 +40,7 @@ pub struct CreateProject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateProject {
     pub name: String,
+    pub owner_id: Option<Uuid>,
     pub description: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -95,6 +98,7 @@ impl ProjectRepository for MemoryProjectRepository {
             id: Uuid::new_v4(),
             code: project.code,
             name: project.name,
+            owner_id: project.owner_id,
             description: project.description,
             start_date: project.start_date,
             end_date: project.end_date,
@@ -120,6 +124,7 @@ impl ProjectRepository for MemoryProjectRepository {
             return Err(ProjectRepositoryError::NotFound);
         };
         existing.name = project.name;
+        existing.owner_id = project.owner_id;
         existing.description = project.description;
         existing.start_date = project.start_date;
         existing.end_date = project.end_date;
@@ -155,7 +160,7 @@ impl SqlxProjectRepository {
 impl ProjectRepository for SqlxProjectRepository {
     async fn list_projects(&self) -> Result<Vec<Project>, ProjectRepositoryError> {
         let rows = sqlx::query(
-            "select id, code, name, description, start_date, end_date, status
+            "select id, code, name, owner_id, description, start_date, end_date, status
              from projects
              where archived_at is null
              order by code asc",
@@ -173,14 +178,15 @@ impl ProjectRepository for SqlxProjectRepository {
     ) -> Result<Project, ProjectRepositoryError> {
         let row = sqlx::query(
             "insert into projects (
-                id, code, name, description, start_date, end_date, status, updated_at
+                id, code, name, owner_id, description, start_date, end_date, status, updated_at
              )
-             values ($1, $2, $3, $4, $5, $6, $7, now())
-             returning id, code, name, description, start_date, end_date, status",
+             values ($1, $2, $3, $4, $5, $6, $7, $8, now())
+             returning id, code, name, owner_id, description, start_date, end_date, status",
         )
         .bind(Uuid::new_v4())
         .bind(project.code)
         .bind(project.name)
+        .bind(project.owner_id)
         .bind(project.description)
         .bind(project.start_date)
         .bind(project.end_date)
@@ -200,16 +206,18 @@ impl ProjectRepository for SqlxProjectRepository {
         let row = sqlx::query(
             "update projects set
                 name = $2,
-                description = $3,
-                start_date = $4,
-                end_date = $5,
-                status = $6,
+                owner_id = $3,
+                description = $4,
+                start_date = $5,
+                end_date = $6,
+                status = $7,
                 updated_at = now()
              where id = $1 and archived_at is null
-             returning id, code, name, description, start_date, end_date, status",
+             returning id, code, name, owner_id, description, start_date, end_date, status",
         )
         .bind(id)
         .bind(project.name)
+        .bind(project.owner_id)
         .bind(project.description)
         .bind(project.start_date)
         .bind(project.end_date)
@@ -227,7 +235,7 @@ impl ProjectRepository for SqlxProjectRepository {
         let row = sqlx::query(
             "update projects set status = 'archived', archived_at = now(), updated_at = now()
              where id = $1 and archived_at is null
-             returning id, code, name, description, start_date, end_date, status",
+             returning id, code, name, owner_id, description, start_date, end_date, status",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -301,6 +309,9 @@ fn row_to_project(row: sqlx::postgres::PgRow) -> Result<Project, ProjectReposito
             .map_err(|_| ProjectRepositoryError::Database)?,
         name: row
             .try_get("name")
+            .map_err(|_| ProjectRepositoryError::Database)?,
+        owner_id: row
+            .try_get("owner_id")
             .map_err(|_| ProjectRepositoryError::Database)?,
         description: row
             .try_get("description")

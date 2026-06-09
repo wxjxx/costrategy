@@ -1,5 +1,5 @@
 use crate::auth::UserRole;
-use crate::dingtalk::DingTalkClient;
+use crate::dingtalk::{DingTalkClient, DingtalkClientError};
 use crate::error::{ApiErrorCode, AppError};
 use crate::users::{
     NewDepartment, NewUser, SyncLogRecord, SyncUserOutcome, UserRepository, UserStatus,
@@ -29,11 +29,21 @@ where
     }
 
     pub async fn sync_contacts(&self) -> Result<DingtalkSyncResult, AppError> {
+        match self.try_sync_contacts().await {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                self.record_failed_sync_log(&error).await?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn try_sync_contacts(&self) -> Result<DingtalkSyncResult, AppError> {
         let departments = self
             .dingtalk
             .list_departments()
             .await
-            .map_err(|_| AppError::internal(ApiErrorCode::DingtalkSyncFailed))?;
+            .map_err(dingtalk_sync_error_to_app)?;
 
         let mut seen_users = HashSet::new();
         let mut created_users = 0;
@@ -54,7 +64,7 @@ where
                 .dingtalk
                 .list_users_by_department(department.dingtalk_dept_id)
                 .await
-                .map_err(|_| AppError::internal(ApiErrorCode::DingtalkSyncFailed))?;
+                .map_err(dingtalk_sync_error_to_app)?;
 
             let mut department_user_ids = Vec::with_capacity(dingtalk_users.len());
             for dingtalk_user in dingtalk_users {
@@ -110,5 +120,34 @@ where
             updated_users,
             disabled_users,
         })
+    }
+
+    async fn record_failed_sync_log(&self, error: &AppError) -> Result<(), AppError> {
+        let failure_reason = match error.code() {
+            ApiErrorCode::DingtalkConfigMissing => "dingtalk config missing",
+            ApiErrorCode::DingtalkSyncFailed => "dingtalk sync failed",
+            ApiErrorCode::DatabaseError => "database operation failed",
+            _ => "sync failed",
+        };
+
+        self.users
+            .record_sync_log(SyncLogRecord {
+                status: "failed".to_string(),
+                created_users: 0,
+                updated_users: 0,
+                disabled_users: 0,
+                failure_reason: Some(failure_reason.to_string()),
+            })
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))
+    }
+}
+
+fn dingtalk_sync_error_to_app(error: DingtalkClientError) -> AppError {
+    match error {
+        DingtalkClientError::ConfigMissing => {
+            AppError::internal(ApiErrorCode::DingtalkConfigMissing)
+        }
+        _ => AppError::internal(ApiErrorCode::DingtalkSyncFailed),
     }
 }
