@@ -2,7 +2,7 @@ use actix_web::cookie::Cookie;
 use actix_web::{http::StatusCode, test, web, App};
 use costrategy_backend::app_state::AppState;
 use costrategy_backend::auth::{SessionStore, UserRole};
-use costrategy_backend::config::{AppConfig, DatabaseConfig, RustfsConfig};
+use costrategy_backend::config::{AppConfig, DatabaseConfig, DingtalkConfig, RustfsConfig};
 use costrategy_backend::dingtalk::{DingTalkLoginIdentity, MockDingTalkClient};
 use costrategy_backend::error::{ApiErrorCode, ApiErrorResponse};
 use costrategy_backend::settings::MemorySettingsRepository;
@@ -46,9 +46,22 @@ async fn admin_can_read_and_update_masked_system_settings() {
     assert_eq!(initial_response.status(), StatusCode::OK);
     let initial: serde_json::Value = test::read_body_json(initial_response).await;
     let rustfs_endpoint = find_setting(&initial, "rustfs.endpoint");
+    assert_eq!(rustfs_endpoint["group"], "rustfs");
     assert_eq!(rustfs_endpoint["value_masked"], "10.0.0.4:9000");
     assert_eq!(rustfs_endpoint["source"], "env");
     assert_eq!(initial["connection_status"]["rustfs"], "configured");
+    assert_eq!(
+        find_setting(&initial, "dingtalk.corp_id")["group"],
+        "dingtalk"
+    );
+    assert_eq!(
+        find_setting(&initial, "dingtalk.corp_id")["value_masked"],
+        "ding-corp"
+    );
+    assert_eq!(
+        find_setting(&initial, "dingtalk.client_secret")["value_masked"],
+        "di***et"
+    );
 
     let update_response = test::call_service(
         &app,
@@ -219,6 +232,13 @@ fn test_config() -> AppConfig {
             access_key_id: "rustfs-access".to_string(),
             secret_access_key: "rustfs-secret".to_string(),
         },
-        dingtalk: None,
+        dingtalk: Some(DingtalkConfig {
+            corp_id: "ding-corp".to_string(),
+            client_id: "ding-client".to_string(),
+            client_secret: "ding-secret".to_string(),
+            agent_id: 123456,
+            oapi_base_url: "https://oapi.dingtalk.com".to_string(),
+        }),
+        admin_auth_token: None,
     }
 }

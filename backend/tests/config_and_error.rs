@@ -40,6 +40,29 @@ fn parses_standard_environment_variables() {
     assert_eq!(dingtalk.client_secret, "ding-secret");
     assert_eq!(dingtalk.agent_id, 123456);
     assert_eq!(dingtalk.oapi_base_url, "https://oapi.dingtalk.com");
+    assert!(config.admin_auth_token.is_none());
+}
+
+#[test]
+fn parses_admin_auth_token_from_standard_environment_variables() {
+    let config = AppConfig::from_env_vars([
+        (
+            "DATABASE_URL",
+            "postgres://task_user:p%40ss%20word@10.0.0.2:5432/costrategy",
+        ),
+        ("RUSTFS_ENDPOINT", "10.0.0.4:9000"),
+        ("RUSTFS_REGION", "cn-east-1"),
+        ("RUSTFS_BUCKET", "costrategy-files"),
+        ("RUSTFS_ACCESS_KEY_ID", "rustfs-access"),
+        ("RUSTFS_SECRET_ACCESS_KEY", "rustfs-secret"),
+        ("ADMIN_AUTH_TOKEN", "bootstrap-admin-token"),
+    ])
+    .expect("admin token env vars should parse");
+
+    assert_eq!(
+        config.admin_auth_token.as_deref(),
+        Some("bootstrap-admin-token")
+    );
 }
 
 #[test]

@@ -169,16 +169,29 @@ impl DingtalkHttpClient {
             .get(url)
             .send()
             .await
-            .map_err(|_| DingtalkClientError::SyncFailed)?
+            .map_err(|error| {
+                log::error!("dingtalk http: get access token request failed: {error}");
+                DingtalkClientError::SyncFailed
+            })?
             .json()
             .await
-            .map_err(|_| DingtalkClientError::SyncFailed)?;
-        if response.errcode.unwrap_or(0) != 0 {
+            .map_err(|error| {
+                log::error!("dingtalk http: get access token response parse failed: {error}");
+                DingtalkClientError::SyncFailed
+            })?;
+        let errcode = response.errcode.unwrap_or(0);
+        if errcode != 0 {
+            log::error!(
+                "dingtalk http: get access token api failed, errcode={}, errmsg={}",
+                errcode,
+                response.errmsg.as_deref().unwrap_or("")
+            );
             return Err(DingtalkClientError::SyncFailed);
         }
-        let token = response
-            .access_token
-            .ok_or(DingtalkClientError::SyncFailed)?;
+        let token = response.access_token.ok_or_else(|| {
+            log::error!("dingtalk http: get access token response missing access_token");
+            DingtalkClientError::SyncFailed
+        })?;
         let expires_in = response.expires_in.unwrap_or(7200);
         let refresh_after = expires_in.saturating_sub(300).max(60);
 
@@ -224,21 +237,40 @@ impl DingtalkHttpClient {
         url.query_pairs_mut()
             .append_pair("access_token", &access_token);
 
-        let response: DingtalkApiResponse<T> = self
+        let raw_response = self
             .http
             .post(url)
             .json(&body)
             .send()
             .await
-            .map_err(|_| fallback_error.clone())?
-            .json()
-            .await
-            .map_err(|_| fallback_error.clone())?;
+            .map_err(|error| {
+                log::error!("dingtalk http: request failed, path={path}: {error}");
+                fallback_error.clone()
+            })?;
+        let status = raw_response.status();
+        if !status.is_success() {
+            log::error!("dingtalk http: non-success http status, path={path}, status={status}");
+        }
+        let response: DingtalkApiResponse<T> = raw_response.json().await.map_err(|error| {
+            log::error!(
+                "dingtalk http: response parse failed, path={path}, status={status}: {error}"
+            );
+            fallback_error.clone()
+        })?;
         if response.errcode != 0 {
+            log::error!(
+                "dingtalk http: api failed, path={}, errcode={}, errmsg={}",
+                path,
+                response.errcode,
+                response.errmsg.as_deref().unwrap_or("")
+            );
             return Err(fallback_error);
         }
 
-        response.result.ok_or(fallback_error)
+        response.result.ok_or_else(|| {
+            log::error!("dingtalk http: response missing result, path={path}");
+            fallback_error
+        })
     }
 }
 
@@ -353,6 +385,7 @@ impl DingTalkClient for DingtalkHttpClient {
 #[derive(Debug, Deserialize)]
 struct AccessTokenResponse {
     errcode: Option<i64>,
+    errmsg: Option<String>,
     access_token: Option<String>,
     expires_in: Option<u64>,
 }
@@ -360,6 +393,7 @@ struct AccessTokenResponse {
 #[derive(Debug, Deserialize)]
 struct DingtalkApiResponse<T> {
     errcode: i64,
+    errmsg: Option<String>,
     result: Option<T>,
 }
 

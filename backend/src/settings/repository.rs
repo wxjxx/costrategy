@@ -387,6 +387,19 @@ fn find_definition(key: &str) -> Option<SettingDefinition> {
 
 fn env_value_for(definition: SettingDefinition, config: &AppConfig) -> Option<String> {
     match definition.key {
+        "dingtalk.corp_id" => config.dingtalk.as_ref().map(|value| value.corp_id.clone()),
+        "dingtalk.client_id" => config
+            .dingtalk
+            .as_ref()
+            .map(|value| value.client_id.clone()),
+        "dingtalk.client_secret" => config
+            .dingtalk
+            .as_ref()
+            .map(|value| value.client_secret.clone()),
+        "dingtalk.agent_id" => config
+            .dingtalk
+            .as_ref()
+            .map(|value| value.agent_id.to_string()),
         "rustfs.endpoint" => Some(config.rustfs.endpoint.clone()),
         "rustfs.region" => Some(config.rustfs.region.clone()),
         "rustfs.bucket" => Some(config.rustfs.bucket.clone()),

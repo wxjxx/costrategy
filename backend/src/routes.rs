@@ -18,7 +18,7 @@ use crate::tasks::{
     CreateTask, CreateTaskAttachment, CreateTaskComment, TaskFilter, TaskPriority, TaskRepository,
     TaskRepositoryError, TaskSort, TaskStatus, UpdateTask,
 };
-use crate::users::{UserRepository, UserRepositoryError, UserStatus};
+use crate::users::{NewUser, UserRepository, UserRepositoryError, UserStatus};
 use actix_multipart::Multipart;
 use actix_web::cookie::time::Duration;
 use actix_web::cookie::{Cookie, SameSite};
@@ -42,6 +42,10 @@ where
     configure(config);
     config
         .route("/api/auth/dingtalk/login", web::post().to(login::<C, R>))
+        .route(
+            "/api/auth/admin-token/login",
+            web::post().to(admin_token_login::<C, R>),
+        )
         .route("/api/auth/logout", web::post().to(logout::<C, R>))
         .route("/api/me", web::get().to(me::<C, R>))
         .route(
@@ -191,6 +195,11 @@ struct DingtalkLoginRequest {
     code: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AdminTokenLoginRequest {
+    token: String,
+}
+
 async fn login<C, R>(
     state: web::Data<AppState<C, R>>,
     payload: web::Json<DingtalkLoginRequest>,
@@ -199,8 +208,14 @@ where
     C: DingTalkClient,
     R: UserRepository,
 {
+    log::info!("dingtalk auth route: login request received");
     let service = DingtalkAuthService::new(state.dingtalk.clone(), state.users.clone());
     let current_user = service.login_with_code(&payload.code).await?;
+    log::info!(
+        "dingtalk auth route: creating backend session, user_id={}, role={:?}",
+        current_user.id,
+        current_user.role
+    );
     let session_token = state.sessions.create(current_user.clone());
     let cookie = Cookie::build(SESSION_COOKIE_NAME, session_token)
         .http_only(true)
@@ -208,6 +223,83 @@ where
         .path("/")
         .finish();
 
+    log::info!(
+        "dingtalk auth route: login response ready, user_id={}",
+        current_user.id
+    );
+    Ok(HttpResponse::Ok().cookie(cookie).json(current_user))
+}
+
+async fn admin_token_login<C, R>(
+    state: web::Data<AppState<C, R>>,
+    config: web::Data<AppConfig>,
+    payload: web::Json<AdminTokenLoginRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    let Some(configured_token) = config.admin_auth_token.as_deref() else {
+        log::warn!("admin token auth route: token login attempted but token is not configured");
+        return Err(AppError::new(
+            actix_web::http::StatusCode::UNAUTHORIZED,
+            ApiErrorCode::AuthNotLogin,
+        ));
+    };
+
+    if payload.token != configured_token {
+        log::warn!("admin token auth route: invalid token login attempt");
+        return Err(AppError::new(
+            actix_web::http::StatusCode::UNAUTHORIZED,
+            ApiErrorCode::AuthNotLogin,
+        ));
+    }
+
+    log::info!("admin token auth route: token accepted, creating bootstrap admin session");
+    state
+        .users
+        .upsert_synced_user(NewUser {
+            dingtalk_user_id: "__admin_token__".to_string(),
+            union_id: None,
+            name: "系统管理员".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: crate::auth::UserRole::Admin,
+            status: UserStatus::Active,
+        })
+        .await
+        .map_err(|error| {
+            log::error!("admin token auth route: failed to upsert bootstrap admin: {error}");
+            AppError::internal(ApiErrorCode::DatabaseError)
+        })?;
+
+    let user = state
+        .users
+        .find_by_dingtalk_user_id("__admin_token__")
+        .await
+        .map_err(|error| {
+            log::error!("admin token auth route: failed to load bootstrap admin: {error}");
+            AppError::internal(ApiErrorCode::DatabaseError)
+        })?
+        .ok_or_else(|| AppError::internal(ApiErrorCode::DatabaseError))?;
+    let current_user = CurrentUser {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        departments: Vec::new(),
+        permissions: user.role.permission_codes(),
+    };
+    let session_token = state.sessions.create(current_user.clone());
+    let cookie = Cookie::build(SESSION_COOKIE_NAME, session_token)
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .finish();
+
+    log::info!(
+        "admin token auth route: login response ready, user_id={}",
+        current_user.id
+    );
     Ok(HttpResponse::Ok().cookie(cookie).json(current_user))
 }
 
@@ -264,12 +356,34 @@ where
     R: UserRepository,
 {
     let current_user = require_current_user(&state, &request)?;
+    log::info!(
+        "dingtalk sync route: request received, user_id={}, role={:?}",
+        current_user.id,
+        current_user.role
+    );
     if !current_user.role.has(Permission::RunDingtalkSync) {
+        log::warn!(
+            "dingtalk sync route: permission denied, user_id={}, role={:?}",
+            current_user.id,
+            current_user.role
+        );
         return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
     }
 
+    log::info!(
+        "dingtalk sync route: permission granted, starting service, user_id={}",
+        current_user.id
+    );
     let service = DingtalkSyncService::new(state.dingtalk.clone(), state.users.clone());
-    Ok(HttpResponse::Ok().json(service.sync_contacts().await?))
+    let result = service.sync_contacts().await?;
+    log::info!(
+        "dingtalk sync route: service completed, user_id={}, created_users={}, updated_users={}, disabled_users={}",
+        current_user.id,
+        result.created_users,
+        result.updated_users,
+        result.disabled_users
+    );
+    Ok(HttpResponse::Ok().json(result))
 }
 
 async fn list_dingtalk_sync_logs<C, R>(

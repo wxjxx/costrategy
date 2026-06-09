@@ -59,6 +59,15 @@ fn paths() -> Value {
                 response_ref("CurrentUser")
             )
         },
+        "/api/auth/admin-token/login": {
+            "post": operation(
+                "Auth",
+                "管理员授权 token 登录",
+                "接收后端配置的管理员授权 token，换取系统管理员登录态并写入 session cookie",
+                json_ref_body("AdminTokenLoginRequest"),
+                response_ref("CurrentUser")
+            )
+        },
         "/api/auth/logout": {
             "post": secured_operation(
                 "Auth",
@@ -271,6 +280,7 @@ fn components() -> Value {
             ]),
             "HealthResponse": object_schema(vec![required_prop("status", string_schema())]),
             "DingtalkLoginRequest": object_schema(vec![required_prop("code", string_schema())]),
+            "AdminTokenLoginRequest": object_schema(vec![required_prop("token", string_schema())]),
             "CurrentUser": object_schema(vec![
                 required_prop("id", uuid_schema()),
                 required_prop("name", string_schema()),

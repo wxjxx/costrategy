@@ -18,6 +18,7 @@
     "@tiptap/vue-3": "^2.14.0",
     "axios": "^1.9.0",
     "dhtmlx-gantt": "^9.0.11",
+    "dingtalk-jsapi": "^3.2.9",
     "dompurify": "^3.2.6",
     "element-plus": "^2.10.2",
     "pinia": "^3.0.3",

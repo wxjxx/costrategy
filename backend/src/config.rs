@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub rustfs: RustfsConfig,
     pub dingtalk: Option<DingtalkConfig>,
+    pub admin_auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +67,7 @@ struct ParsedConfig {
     dingtalk_client_secret: Option<String>,
     dingtalk_agent_id: Option<String>,
     dingtalk_oapi_base_url: Option<String>,
+    admin_auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +257,7 @@ impl AppConfig {
                 secret_access_key: secret_access_key.expect("checked missing"),
             },
             dingtalk,
+            admin_auth_token: parsed.admin_auth_token.filter(|value| !value.is_empty()),
         })
     }
 }
@@ -392,6 +395,7 @@ fn read_standard_env_pair(key: &str, value: String, parsed: &mut ParsedConfig) {
         }
         "dingtalk_agent_id" => parsed.dingtalk_agent_id = Some(value),
         "dingtalk_oapi_base_url" => parsed.dingtalk_oapi_base_url = Some(value),
+        "admin_auth_token" => parsed.admin_auth_token = Some(value),
         _ => {}
     }
 }

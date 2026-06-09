@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { type AxiosRequestConfig } from "axios";
 import type {
   CurrentUser,
   DingtalkSyncLog,
@@ -17,9 +17,16 @@ import type {
   UserStatus,
 } from "@/types";
 
+declare module "axios" {
+  interface AxiosRequestConfig {
+    skipUnauthorizedRedirect?: boolean;
+  }
+}
+
 const baseURL = import.meta.env.VITE_API_BASE_URL || "/api";
 type UnauthorizedRedirectHandler = (path: string) => void;
 let unauthorizedRedirectHandler: UnauthorizedRedirectHandler | undefined;
+type RequestOptions = Pick<AxiosRequestConfig, "skipUnauthorizedRedirect">;
 
 export const http = axios.create({
   baseURL,
@@ -34,6 +41,17 @@ export function setUnauthorizedRedirectHandler(
 }
 
 export function redirectUnauthorizedError(error: unknown): Promise<never> {
+  const shouldSkipRedirect =
+    typeof error === "object" &&
+    error !== null &&
+    "config" in error &&
+    (error as { config?: { skipUnauthorizedRedirect?: boolean } }).config
+      ?.skipUnauthorizedRedirect === true;
+
+  if (shouldSkipRedirect) {
+    return Promise.reject(error);
+  }
+
   if (axios.isAxiosError(error) && error.response?.status === 401) {
     unauthorizedRedirectHandler?.("/401");
   } else if (
@@ -60,7 +78,12 @@ export function buildTaskQueryParams(filters: TaskFilters): URLSearchParams {
 }
 
 export const api = {
-  me: async (): Promise<CurrentUser> => (await http.get("/me")).data,
+  me: async (options: RequestOptions = {}): Promise<CurrentUser> =>
+    (await http.get("/me", options)).data,
+  dingtalkLogin: async (code: string): Promise<CurrentUser> =>
+    (await http.post("/auth/dingtalk/login", { code })).data,
+  adminTokenLogin: async (token: string): Promise<CurrentUser> =>
+    (await http.post("/auth/admin-token/login", { token })).data,
   tasks: async (filters: TaskFilters = {}): Promise<Task[]> =>
     (await http.get("/tasks", { params: buildTaskQueryParams(filters) })).data,
   taskDetail: async (taskId: string): Promise<TaskDetail> =>

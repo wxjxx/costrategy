@@ -7,7 +7,10 @@ import type { NotificationRule } from "@/types";
 
 const queryClient = useQueryClient();
 const activeTab = ref("dingtalk");
-const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+const { data: settings, error: settingsError } = useQuery({
+  queryKey: ["settings"],
+  queryFn: api.settings,
+});
 const { data: syncLogs } = useQuery({ queryKey: ["dingtalk-sync-logs"], queryFn: api.syncLogs });
 const { data: rules } = useQuery({ queryKey: ["notification-rules"], queryFn: api.notificationRules });
 const { data: records } = useQuery({ queryKey: ["notification-records"], queryFn: api.notificationRecords });
@@ -22,6 +25,7 @@ const latestSyncLog = computed(() => syncLogs.value?.[0]);
 const syncMutation = useMutation({
   mutationFn: api.syncDingtalk,
   onSuccess: () => ElMessage.success("通讯录同步已触发"),
+  onError: () => ElMessage.error("通讯录同步失败，请查看后端日志"),
   onSettled: () => {
     void queryClient.invalidateQueries({ queryKey: ["dingtalk-sync-logs"] });
   },
@@ -50,6 +54,14 @@ function ruleLabel(ruleType: string): string {
 function syncStatusLabel(status?: string): string {
   return { running: "运行中", success: "成功", failed: "失败" }[status ?? ""] ?? "-";
 }
+
+function settingSourceLabel(source: string): string {
+  return { database: "数据库", env: "环境变量", empty: "未配置" }[source] ?? source;
+}
+
+function settingDisplayValue(value?: string): string {
+  return value && value.trim() ? value : "未配置";
+}
 </script>
 
 <template>
@@ -64,11 +76,27 @@ function syncStatusLabel(status?: string): string {
 
     <section v-if="activeTab === 'dingtalk'" class="content-card">
       <h2>钉钉应用配置</h2>
+      <ElAlert
+        v-if="settingsError"
+        title="钉钉应用配置加载失败，请确认当前账号有系统设置权限。"
+        type="error"
+        show-icon
+        :closable="false"
+      />
       <ElForm label-position="top" class="settings-form">
         <ElRow :gutter="40">
           <ElCol v-for="item in dingtalkSettings" :key="item.key" :span="6">
             <ElFormItem :label="item.label">
-              <ElInput :model-value="item.value_masked" :type="item.sensitive ? 'password' : 'text'" show-password />
+              <ElInput
+                :model-value="settingDisplayValue(item.value_masked)"
+                :type="item.sensitive ? 'password' : 'text'"
+                :class="{ 'is-empty-setting': !item.configured }"
+                show-password
+                readonly
+              />
+              <ElTag class="setting-source" size="small" :type="item.configured ? 'success' : 'info'">
+                {{ settingSourceLabel(item.source) }}
+              </ElTag>
             </ElFormItem>
           </ElCol>
         </ElRow>
@@ -139,7 +167,16 @@ function syncStatusLabel(status?: string): string {
         <ElRow :gutter="30">
           <ElCol v-for="item in rustfsSettings" :key="item.key" :span="8">
             <ElFormItem :label="item.label">
-              <ElInput :model-value="item.value_masked" :type="item.sensitive ? 'password' : 'text'" show-password />
+              <ElInput
+                :model-value="settingDisplayValue(item.value_masked)"
+                :type="item.sensitive ? 'password' : 'text'"
+                :class="{ 'is-empty-setting': !item.configured }"
+                show-password
+                readonly
+              />
+              <ElTag class="setting-source" size="small" :type="item.configured ? 'success' : 'info'">
+                {{ settingSourceLabel(item.source) }}
+              </ElTag>
             </ElFormItem>
           </ElCol>
         </ElRow>

@@ -2,6 +2,7 @@ use actix_web::cookie::Cookie;
 use actix_web::{http::StatusCode, test, web, App};
 use costrategy_backend::app_state::AppState;
 use costrategy_backend::auth::{SessionStore, UserRole};
+use costrategy_backend::config::{AppConfig, DatabaseConfig, RustfsConfig};
 use costrategy_backend::dingtalk::{
     DingTalkDepartment, DingTalkLoginIdentity, DingTalkUser, MockDingTalkClient,
 };
@@ -105,6 +106,71 @@ async fn me_without_session_returns_auth_not_login() {
 
     let request = test::TestRequest::get().uri("/api/me").to_request();
     let response = test::call_service(&app, request).await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(body.error.code, ApiErrorCode::AuthNotLogin);
+}
+
+#[actix_web::test]
+async fn admin_token_login_sets_admin_session() {
+    let app = test_app_with_admin_token(
+        MockDingTalkClient::default(),
+        MemoryUserRepository::default(),
+        Some("bootstrap-admin-token".to_string()),
+    )
+    .await;
+
+    let login_request = test::TestRequest::post()
+        .uri("/api/auth/admin-token/login")
+        .set_json(json!({ "token": "bootstrap-admin-token" }))
+        .to_request();
+    let login_response = test::call_service(&app, login_request).await;
+    assert_eq!(login_response.status(), StatusCode::OK);
+    let session_cookie = login_response
+        .response()
+        .cookies()
+        .find(|cookie| cookie.name() == "costrategy_session")
+        .expect("admin token login should set session cookie")
+        .into_owned();
+    let body: serde_json::Value = test::read_body_json(login_response).await;
+    assert_eq!(body["name"], "系统管理员");
+    assert_eq!(body["role"], "admin");
+    assert!(body["permissions"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("run_dingtalk_sync")));
+
+    let me_response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/me")
+            .cookie(session_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(me_response.status(), StatusCode::OK);
+    let me_body: serde_json::Value = test::read_body_json(me_response).await;
+    assert_eq!(me_body["role"], "admin");
+}
+
+#[actix_web::test]
+async fn admin_token_login_rejects_invalid_token() {
+    let app = test_app_with_admin_token(
+        MockDingTalkClient::default(),
+        MemoryUserRepository::default(),
+        Some("bootstrap-admin-token".to_string()),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/auth/admin-token/login")
+            .set_json(json!({ "token": "wrong-token" }))
+            .to_request(),
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body: ApiErrorResponse = test::read_body_json(response).await;
@@ -436,6 +502,18 @@ async fn test_app(
     Response = actix_web::dev::ServiceResponse,
     Error = actix_web::Error,
 > {
+    test_app_with_admin_token(dingtalk, users, None).await
+}
+
+async fn test_app_with_admin_token(
+    dingtalk: MockDingTalkClient,
+    users: MemoryUserRepository,
+    admin_auth_token: Option<String>,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
     test::init_service(
         App::new()
             .app_data(web::Data::new(AppState::new(
@@ -443,12 +521,34 @@ async fn test_app(
                 users,
                 SessionStore::default(),
             )))
+            .app_data(web::Data::new(test_config(admin_auth_token)))
             .configure(costrategy_backend::routes::configure_app::<
                 MockDingTalkClient,
                 MemoryUserRepository,
             >),
     )
     .await
+}
+
+fn test_config(admin_auth_token: Option<String>) -> AppConfig {
+    AppConfig {
+        database: DatabaseConfig {
+            host: "127.0.0.1".to_string(),
+            port: 5432,
+            user: "test".to_string(),
+            password: "test".to_string(),
+            db: "test".to_string(),
+        },
+        rustfs: RustfsConfig {
+            endpoint: "127.0.0.1:9000".to_string(),
+            region: "local".to_string(),
+            bucket: "test".to_string(),
+            access_key_id: "test".to_string(),
+            secret_access_key: "test".to_string(),
+        },
+        dingtalk: None,
+        admin_auth_token,
+    }
 }
 
 async fn login_cookie<S>(app: &S, code: &str) -> Cookie<'static>

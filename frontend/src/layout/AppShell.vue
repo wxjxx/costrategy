@@ -17,7 +17,7 @@ import UserAvatar from "@/components/UserAvatar.vue";
 const route = useRoute();
 const { data: currentUser } = useQuery({
   queryKey: ["me"],
-  queryFn: api.me,
+  queryFn: () => api.me(),
 });
 
 const pageTitle = computed(() => String(route.meta.title ?? "工作台"));

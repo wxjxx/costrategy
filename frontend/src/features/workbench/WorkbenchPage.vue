@@ -16,7 +16,10 @@ const router = useRouter();
 const store = useWorkbenchStore();
 const showFilters = ref(false);
 
-const { data: currentUser } = useQuery({ queryKey: ["me"], queryFn: api.me });
+const { data: currentUser } = useQuery({
+  queryKey: ["me"],
+  queryFn: () => api.me(),
+});
 const { data: tasksData } = useQuery({
   queryKey: ["tasks", computed(() => store.filters)],
   queryFn: () => api.tasks(store.filters),
