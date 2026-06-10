@@ -66,6 +66,16 @@ fn parses_admin_auth_token_from_standard_environment_variables() {
 }
 
 #[test]
+fn app_error_display_includes_stable_error_code_for_logs() {
+    let error = AppError::bad_request(ApiErrorCode::ValidationFailed);
+    let message = error.to_string();
+
+    assert!(message.contains("400"));
+    assert!(message.contains("VALIDATION_FAILED"));
+    assert!(message.contains("提交内容不符合要求"));
+}
+
+#[test]
 fn parses_standard_dotenv_file() {
     let dir = tempfile::tempdir().expect("temp dir should be created");
     let path = dir.path().join(".env");

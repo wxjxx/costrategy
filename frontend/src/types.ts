@@ -28,17 +28,35 @@ export interface User {
 
 export interface Project {
   id: string;
+  code: string;
   name: string;
   description?: string;
   owner_id?: string;
+  start_date?: string;
+  end_date?: string;
   status: ProjectStatus;
 }
 
-export interface ProjectPayload {
+export interface CreateProjectPayload {
+  code: string;
   name: string;
   description?: string;
   owner_id?: string;
+  start_date?: string;
+  end_date?: string;
+  status: ProjectStatus;
 }
+
+export interface UpdateProjectPayload {
+  name: string;
+  description?: string;
+  owner_id?: string;
+  start_date?: string;
+  end_date?: string;
+  status: ProjectStatus;
+}
+
+export type ProjectPayload = CreateProjectPayload;
 
 export interface Task {
   id: string;
@@ -47,21 +65,29 @@ export interface Task {
   title: string;
   assignee_id: string;
   assignee_name?: string;
+  assignees?: TaskAssignee[];
   status: TaskStatus;
   priority: TaskPriority;
   start_date: string;
   due_date: string;
   description_json: Record<string, unknown>;
   creator_id: string;
+  creator_name?: string;
   archived: boolean;
   is_overdue: boolean;
   display_status: string;
+}
+
+export interface TaskAssignee {
+  id: string;
+  name?: string;
 }
 
 export interface TaskPayload {
   project_id: string;
   title: string;
   assignee_id: string;
+  assignee_ids: string[];
   status: TaskStatus;
   priority: TaskPriority;
   start_date: string;
@@ -87,6 +113,10 @@ export interface TaskAttachment {
   uploader_id: string;
   uploader_name?: string;
   created_at: string;
+}
+
+export interface RichTextImageUpload {
+  url: string;
 }
 
 export interface TaskActivityLog {
@@ -132,6 +162,11 @@ export interface SettingsResponse {
     dingtalk: string;
     rustfs: string;
   };
+}
+
+export interface SettingsUpdatePayload {
+  key: string;
+  value: string;
 }
 
 export interface DingtalkSyncLog {

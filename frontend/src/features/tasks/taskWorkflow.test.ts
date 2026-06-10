@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { CurrentUser, Task } from "@/types";
 import {
   canMoveTaskToStatus,
+  filterTasks,
   groupTasksByDisplayStatus,
+  moveTaskForDisplay,
+  statusColor,
+  taskDisplayStatusColor,
 } from "./taskWorkflow";
 
 const baseTask: Task = {
@@ -57,5 +61,46 @@ describe("taskWorkflow", () => {
     expect(
       canMoveTaskToStatus(baseTask, "done", { ...employee, role: "manager" }),
     ).toBe(true);
+  });
+
+  it("matches any task assignee for permissions and filters", () => {
+    const task = {
+      ...baseTask,
+      assignee_id: "user-9",
+      assignees: [
+        { id: "user-9", name: "王五" },
+        { id: employee.id, name: employee.name },
+      ],
+    };
+
+    expect(canMoveTaskToStatus(task, "done", employee)).toBe(true);
+    expect(filterTasks([task], { assignee_id: employee.id })).toEqual([task]);
+  });
+
+  it("updates a task locally for optimistic kanban display", () => {
+    const moved = moveTaskForDisplay(
+      [{ ...baseTask, status: "todo", is_overdue: true }],
+      "task-1",
+      "in_progress",
+    );
+
+    expect(moved[0]).toMatchObject({
+      id: "task-1",
+      status: "in_progress",
+      is_overdue: false,
+    });
+    expect(groupTasksByDisplayStatus(moved).in_progress.map((task) => task.id)).toEqual([
+      "task-1",
+    ]);
+  });
+
+  it("uses one color palette for task status displays", () => {
+    expect(statusColor("todo")).toBe("#8b95a5");
+    expect(statusColor("in_progress")).toBe("#2b7bff");
+    expect(statusColor("done")).toBe("#35b86b");
+    expect(statusColor("overdue")).toBe("#ff4d4f");
+    expect(
+      taskDisplayStatusColor({ ...baseTask, status: "todo", is_overdue: true }),
+    ).toBe("#ff4d4f");
   });
 });

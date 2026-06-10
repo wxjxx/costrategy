@@ -33,6 +33,9 @@ const { data: usersData } = useQuery({ queryKey: ["users"], queryFn: api.users }
 const tasks = computed(() => filterTasks(tasksData.value ?? [], store.filters));
 const projects = computed(() => projectsData.value ?? []);
 const users = computed(() => usersData.value ?? []);
+const isMyTasksFilterActive = computed(
+  () => Boolean(currentUser.value) && store.filters.assignee_id === currentUser.value?.id,
+);
 
 const viewTabs: Array<{ key: WorkbenchView; label: string }> = [
   { key: "kanban", label: "看板" },
@@ -56,6 +59,16 @@ const filterChips = computed(() => {
 function applyFilters(filters: TaskFilters) {
   store.setFilters(filters);
 }
+
+function toggleMyTasksFilter() {
+  const userId = currentUser.value?.id;
+  if (!userId) return;
+  if (store.filters.assignee_id === userId) {
+    store.clearFilter("assignee_id");
+    return;
+  }
+  store.setFilters({ ...store.filters, assignee_id: userId });
+}
 </script>
 
 <template>
@@ -64,6 +77,15 @@ function applyFilters(filters: TaskFilters) {
       <ElButton type="primary" plain class="filter-button" @click="showFilters = true">
         <ElIcon><Filter /></ElIcon>
         筛选
+      </ElButton>
+      <ElButton
+        v-if="currentUser"
+        :type="isMyTasksFilterActive ? 'primary' : 'default'"
+        plain
+        class="filter-button"
+        @click="toggleMyTasksFilter"
+      >
+        我的任务
       </ElButton>
       <ElTag
         v-for="chip in filterChips"
@@ -92,14 +114,15 @@ function applyFilters(filters: TaskFilters) {
           新建任务
         </ElButton>
       </div>
-      <ElAlert
-        v-if="store.view !== 'gantt'"
-        class="view-alert"
-        type="primary"
-        show-icon
-        :closable="false"
-        title="员工仅可拖拽自己负责的任务，管理人员可拖拽全部任务"
-      />
+      <div v-if="store.view !== 'gantt'" class="view-alert-row">
+        <ElAlert
+          class="view-alert"
+          type="primary"
+          show-icon
+          :closable="false"
+          title="员工仅可拖拽自己负责的任务，管理人员可拖拽全部任务"
+        />
+      </div>
       <TaskKanbanView
         v-if="store.view === 'kanban' && currentUser"
         :tasks="tasks"

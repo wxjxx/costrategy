@@ -1,17 +1,22 @@
 import axios, { type AxiosRequestConfig } from "axios";
 import type {
   CurrentUser,
+  CreateProjectPayload,
   DingtalkSyncLog,
   NotificationRecord,
   NotificationRule,
   Project,
-  ProjectPayload,
+  RichTextImageUpload,
   SettingsResponse,
+  SettingsUpdatePayload,
   Task,
+  TaskAttachment,
+  TaskComment,
   TaskDetail,
   TaskFilters,
   TaskPayload,
   TaskStatus,
+  UpdateProjectPayload,
   User,
   UserRole,
   UserStatus,
@@ -95,11 +100,11 @@ export const api = {
   updateTask: async (taskId: string, payload: TaskPayload): Promise<Task> =>
     (await http.put(`/tasks/${taskId}`, payload)).data,
   projects: async (): Promise<Project[]> => (await http.get("/projects")).data,
-  createProject: async (payload: ProjectPayload): Promise<Project> =>
+  createProject: async (payload: CreateProjectPayload): Promise<Project> =>
     (await http.post("/projects", payload)).data,
   updateProject: async (
     projectId: string,
-    payload: ProjectPayload,
+    payload: UpdateProjectPayload,
   ): Promise<Project> => (await http.put(`/projects/${projectId}`, payload)).data,
   archiveProject: async (projectId: string): Promise<Project> =>
     (await http.post(`/projects/${projectId}/archive`)).data,
@@ -109,6 +114,10 @@ export const api = {
   updateUserStatus: (userId: string, status: UserStatus): Promise<User> =>
     http.patch(`/users/${userId}/status`, { status }).then((response) => response.data),
   settings: async (): Promise<SettingsResponse> => (await http.get("/settings")).data,
+  updateSettings: async (
+    settings: SettingsUpdatePayload[],
+  ): Promise<SettingsResponse> =>
+    (await http.put("/settings", { settings })).data,
   syncLogs: async (): Promise<DingtalkSyncLog[]> =>
     (await http.get("/dingtalk/sync-logs")).data,
   syncDingtalk: async (): Promise<{
@@ -125,4 +134,36 @@ export const api = {
     (await http.patch(`/notification-rules/${ruleType}`, { enabled })).data,
   notificationRecords: async (): Promise<NotificationRecord[]> =>
     (await http.get("/notification-records")).data,
+  createTaskComment: async (
+    taskId: string,
+    content: string,
+  ): Promise<TaskComment> =>
+    (await http.post(`/tasks/${taskId}/comments`, { content })).data,
+  uploadTaskAttachment: async (
+    taskId: string,
+    file: File,
+  ): Promise<TaskAttachment> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return (await http.post(`/tasks/${taskId}/attachments`, formData)).data;
+  },
+  uploadRichTextImage: async (file: File): Promise<RichTextImageUpload> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return (await http.post("/rich-text/images", formData)).data;
+  },
+  downloadTaskAttachment: async (
+    taskId: string,
+    attachmentId: string,
+  ): Promise<Blob> =>
+    (
+      await http.get(`/tasks/${taskId}/attachments/${attachmentId}/download`, {
+        responseType: "blob",
+      })
+    ).data,
+  deleteTaskAttachment: async (
+    taskId: string,
+    attachmentId: string,
+  ): Promise<TaskAttachment> =>
+    (await http.delete(`/tasks/${taskId}/attachments/${attachmentId}`)).data,
 };

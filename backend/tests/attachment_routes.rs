@@ -133,6 +133,61 @@ async fn upload_without_file_returns_validation_failed() {
     assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
 }
 
+#[actix_web::test]
+async fn logged_in_user_can_upload_rich_text_image_and_read_it_back() {
+    let fixture = AttachmentRouteFixture::new().await;
+    let app = attachment_test_app(&fixture).await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+
+    let upload_response = test::call_service(
+        &app,
+        image_multipart_request("/api/rich-text/images", employee_cookie.clone()),
+    )
+    .await;
+    assert_eq!(upload_response.status(), StatusCode::OK);
+    let upload: serde_json::Value = test::read_body_json(upload_response).await;
+    let image_url = upload["url"].as_str().unwrap();
+    assert!(image_url.starts_with("/api/rich-text/images/"));
+
+    let image_response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(image_url)
+            .cookie(employee_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(image_response.status(), StatusCode::OK);
+    assert_eq!(
+        image_response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "image/png"
+    );
+    let downloaded = test::read_body(image_response).await;
+    assert_eq!(&downloaded[..], "png-bytes".as_bytes());
+}
+
+#[actix_web::test]
+async fn rich_text_image_upload_rejects_non_images() {
+    let fixture = AttachmentRouteFixture::new().await;
+    let app = attachment_test_app(&fixture).await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+
+    let response = test::call_service(
+        &app,
+        multipart_request("/api/rich-text/images", employee_cookie),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
+}
+
 struct AttachmentRouteFixture {
     dingtalk: MockDingTalkClient,
     users: MemoryUserRepository,
@@ -300,6 +355,28 @@ fn multipart_request(uri: &str, cookie: Cookie<'static>) -> actix_http::Request 
          Content-Type: text/plain\r\n\
          \r\n\
          附件内容\r\n\
+         --{boundary}--\r\n"
+    );
+
+    test::TestRequest::post()
+        .uri(uri)
+        .cookie(cookie)
+        .insert_header((
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        ))
+        .set_payload(body)
+        .to_request()
+}
+
+fn image_multipart_request(uri: &str, cookie: Cookie<'static>) -> actix_http::Request {
+    let boundary = "image-boundary";
+    let body = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"截图.png\"\r\n\
+         Content-Type: image/png\r\n\
+         \r\n\
+         png-bytes\r\n\
          --{boundary}--\r\n"
     );
 

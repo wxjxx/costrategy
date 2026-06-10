@@ -17,11 +17,26 @@ export const displayColumns: Array<{
   { key: "overdue", title: "已延期", dotClass: "is-red" },
 ];
 
+const taskStatusColors: Record<DisplayStatus, string> = {
+  todo: "#8b95a5",
+  in_progress: "#2b7bff",
+  done: "#35b86b",
+  overdue: "#ff4d4f",
+};
+
 export function getDisplayStatus(task: Task): DisplayStatus {
   if (task.status !== "done" && task.is_overdue) {
     return "overdue";
   }
   return task.status;
+}
+
+export function statusColor(status: DisplayStatus | TaskStatus): string {
+  return taskStatusColors[status];
+}
+
+export function taskDisplayStatusColor(task: Task): string {
+  return statusColor(getDisplayStatus(task));
 }
 
 export function groupTasksByDisplayStatus(
@@ -33,6 +48,16 @@ export function groupTasksByDisplayStatus(
       return groups;
     },
     { todo: [], in_progress: [], done: [], overdue: [] },
+  );
+}
+
+export function moveTaskForDisplay(
+  tasks: Task[],
+  taskId: string,
+  status: TaskStatus,
+): Task[] {
+  return tasks.map((task) =>
+    task.id === taskId ? { ...task, status, is_overdue: false } : task,
   );
 }
 
@@ -48,14 +73,14 @@ export function canMoveTaskToStatus(
   if (targetStatus === "overdue") {
     return false;
   }
-  return canManageTasks(user) || task.assignee_id === user.id;
+  return canManageTasks(user) || taskAssigneeIds(task).includes(user.id);
 }
 
 export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
   const keyword = filters.keyword?.trim().toLowerCase();
   return tasks.filter((task) => {
     if (filters.project_id && task.project_id !== filters.project_id) return false;
-    if (filters.assignee_id && task.assignee_id !== filters.assignee_id) return false;
+    if (filters.assignee_id && !taskAssigneeIds(task).includes(filters.assignee_id)) return false;
     if (filters.status && task.status !== filters.status) return false;
     if (filters.priority && task.priority !== filters.priority) return false;
     if (keyword && !task.title.toLowerCase().includes(keyword)) return false;
@@ -63,6 +88,23 @@ export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
     if (filters.date_to && task.start_date > filters.date_to) return false;
     return true;
   });
+}
+
+export function taskAssigneeIds(task: Task): string[] {
+  const ids = task.assignees?.map((assignee) => assignee.id).filter(Boolean) ?? [];
+  return ids.length > 0 ? ids : [task.assignee_id];
+}
+
+export function taskAssigneeNames(task: Task): string {
+  const names = task.assignees
+    ?.map((assignee) => assignee.name)
+    .filter((name): name is string => Boolean(name?.trim()));
+  if (names?.length) return names.join("、");
+  return task.assignee_name || "-";
+}
+
+export function primaryTaskAssigneeName(task: Task): string | undefined {
+  return task.assignees?.[0]?.name ?? task.assignee_name;
 }
 
 export function statusLabel(status: DisplayStatus | TaskStatus): string {

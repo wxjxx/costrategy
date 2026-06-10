@@ -6,6 +6,7 @@ use crate::notifications::{
 use crate::tasks::{Task, TaskRepository};
 use crate::users::{User, UserRepository, UserStatus};
 use chrono::NaiveDate;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct TaskNotificationService<C, U, N> {
@@ -44,9 +45,32 @@ where
         action: &str,
         task: &Task,
     ) -> Result<(), AppError> {
+        let mut receiver_ids = task
+            .assignees
+            .iter()
+            .map(|assignee| assignee.id)
+            .collect::<Vec<_>>();
+        if receiver_ids.is_empty() {
+            receiver_ids.push(task.assignee_id);
+        }
+        receiver_ids.dedup();
+        for receiver_id in receiver_ids {
+            self.notify_task_receiver_by_id(notification_type, action, task, receiver_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn notify_task_receiver_by_id(
+        &self,
+        notification_type: NotificationType,
+        action: &str,
+        task: &Task,
+        receiver_id: uuid::Uuid,
+    ) -> Result<(), AppError> {
         let Some(receiver) = self
             .users
-            .get_user(task.assignee_id)
+            .get_user(receiver_id)
             .await
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?
         else {
@@ -143,14 +167,16 @@ where
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
 
         for task in tasks {
-            self.notify_task_receiver_once(
-                NotificationType::DueTomorrow,
-                "截止前一天提醒",
-                &task,
-                task.assignee_id,
-                local_date,
-            )
-            .await?;
+            for receiver_id in task_receiver_ids(&task) {
+                self.notify_task_receiver_once(
+                    NotificationType::DueTomorrow,
+                    "截止前一天提醒",
+                    &task,
+                    receiver_id,
+                    local_date,
+                )
+                .await?;
+            }
         }
         Ok(())
     }
@@ -166,20 +192,17 @@ where
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
 
         for task in tasks {
-            self.notify_task_receiver_once(
-                NotificationType::TaskOverdue,
-                "任务延期",
-                &task,
-                task.assignee_id,
-                local_date,
-            )
-            .await?;
+            let mut receiver_ids = task_receiver_ids(&task);
             if let Some(owner_id) = task.project_owner_id {
+                receiver_ids.push(owner_id);
+            }
+            receiver_ids.dedup();
+            for receiver_id in receiver_ids {
                 self.notify_task_receiver_once(
                     NotificationType::TaskOverdue,
                     "任务延期",
                     &task,
-                    owner_id,
+                    receiver_id,
                     local_date,
                 )
                 .await?;
@@ -255,6 +278,20 @@ where
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?;
         Ok(())
     }
+}
+
+fn task_receiver_ids(task: &Task) -> Vec<uuid::Uuid> {
+    let mut seen = HashSet::new();
+    let mut receiver_ids = task
+        .assignees
+        .iter()
+        .map(|assignee| assignee.id)
+        .filter(|id| seen.insert(*id))
+        .collect::<Vec<_>>();
+    if receiver_ids.is_empty() {
+        receiver_ids.push(task.assignee_id);
+    }
+    receiver_ids
 }
 
 fn build_task_message(action: &str, task: &Task) -> String {

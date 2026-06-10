@@ -99,6 +99,33 @@ impl AppError {
 }
 
 impl ApiErrorCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthNotLogin => "AUTH_NOT_LOGIN",
+            Self::AuthForbidden => "AUTH_FORBIDDEN",
+            Self::AuthDingtalkLoginFailed => "AUTH_DINGTALK_LOGIN_FAILED",
+            Self::AuthUserNotSynced => "AUTH_USER_NOT_SYNCED",
+            Self::AuthUserDisabled => "AUTH_USER_DISABLED",
+            Self::ValidationFailed => "VALIDATION_FAILED",
+            Self::ResourceNotFound => "RESOURCE_NOT_FOUND",
+            Self::ConfigMissing => "CONFIG_MISSING",
+            Self::DatabaseError => "DATABASE_ERROR",
+            Self::InternalError => "INTERNAL_ERROR",
+            Self::ProjectArchived => "PROJECT_ARCHIVED",
+            Self::TaskInvalidStatusTransition => "TASK_INVALID_STATUS_TRANSITION",
+            Self::TaskNotAssignee => "TASK_NOT_ASSIGNEE",
+            Self::TaskAssigneeInactive => "TASK_ASSIGNEE_INACTIVE",
+            Self::TaskDateRangeInvalid => "TASK_DATE_RANGE_INVALID",
+            Self::AttachmentUploadFailed => "ATTACHMENT_UPLOAD_FAILED",
+            Self::AttachmentDeleteForbidden => "ATTACHMENT_DELETE_FORBIDDEN",
+            Self::StorageConfigInvalid => "STORAGE_CONFIG_INVALID",
+            Self::StorageDownloadFailed => "STORAGE_DOWNLOAD_FAILED",
+            Self::DingtalkConfigMissing => "DINGTALK_CONFIG_MISSING",
+            Self::DingtalkSyncFailed => "DINGTALK_SYNC_FAILED",
+            Self::DingtalkNotifyFailed => "DINGTALK_NOTIFY_FAILED",
+        }
+    }
+
     pub fn default_message(self) -> &'static str {
         match self {
             Self::AuthNotLogin => "请先登录",
@@ -131,8 +158,9 @@ impl std::fmt::Display for AppError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "{}: {}",
+            "{} {}: {}",
             self.status.as_u16(),
+            self.code.as_str(),
             self.code.default_message()
         )
     }
@@ -146,6 +174,12 @@ impl ResponseError for AppError {
     }
 
     fn error_response(&self) -> HttpResponse {
+        log::error!(
+            "api request failed: status={}, code={}, details={:?}",
+            self.status.as_u16(),
+            self.code.as_str(),
+            self.details
+        );
         HttpResponse::build(self.status).json(self.body())
     }
 }

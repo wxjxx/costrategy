@@ -220,6 +220,49 @@ async fn task_list_rejects_unknown_sort_key() {
 }
 
 #[actix_web::test]
+async fn task_can_have_multiple_assignees_and_any_assignee_can_update_status() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let other_cookie = login_cookie(&app, "other-code").await;
+
+    let create_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/tasks")
+            .cookie(manager_cookie)
+            .set_json(json!({
+                "title": "多人负责人任务",
+                "project_id": fixture.project_id,
+                "assignee_id": fixture.employee_id,
+                "assignee_ids": [fixture.employee_id, fixture.other_id],
+                "status": "todo",
+                "priority": "high",
+                "start_date": "2026-06-01",
+                "due_date": "2026-06-10",
+                "description_json": {"type": "doc", "content": []}
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let created: serde_json::Value = test::read_body_json(create_response).await;
+    assert_eq!(created["assignees"].as_array().unwrap().len(), 2);
+    let task_id = created["id"].as_str().unwrap();
+
+    let update_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri(&format!("/api/tasks/{task_id}/status"))
+            .cookie(other_cookie)
+            .set_json(json!({ "status": "in_progress" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(update_response.status(), StatusCode::OK);
+}
+
+#[actix_web::test]
 async fn task_create_and_assignee_change_trigger_dingtalk_personal_notifications() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
@@ -422,6 +465,7 @@ async fn logged_in_user_can_read_task_detail_and_add_plain_text_comment() {
     assert_eq!(detail_response.status(), StatusCode::OK);
     let detail: serde_json::Value = test::read_body_json(detail_response).await;
     assert_eq!(detail["task"]["title"], "需求文档确认");
+    assert_eq!(detail["task"]["creator_name"], "管理人员");
     assert_eq!(detail["comments"][0]["content"], "今天已完成需求确认。");
     assert_eq!(detail["comments"][0]["author_name"], "员工");
     assert_eq!(detail["attachments"].as_array().unwrap().len(), 0);

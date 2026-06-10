@@ -146,6 +146,14 @@ where
 {
     config
         .route(
+            "/api/rich-text/images",
+            web::post().to(upload_rich_text_image::<C, R, S>),
+        )
+        .route(
+            "/api/rich-text/images/{file_name}",
+            web::get().to(download_rich_text_image::<C, R, S>),
+        )
+        .route(
             "/api/tasks/{task_id}/attachments",
             web::post().to(upload_task_attachment::<C, R, T, S>),
         )
@@ -760,6 +768,7 @@ struct CreateTaskRequest {
     project_id: uuid::Uuid,
     title: String,
     assignee_id: uuid::Uuid,
+    assignee_ids: Option<Vec<uuid::Uuid>>,
     status: TaskStatus,
     priority: TaskPriority,
     start_date: chrono::NaiveDate,
@@ -772,6 +781,7 @@ struct UpdateTaskRequest {
     project_id: uuid::Uuid,
     title: String,
     assignee_id: uuid::Uuid,
+    assignee_ids: Option<Vec<uuid::Uuid>>,
     status: TaskStatus,
     priority: TaskPriority,
     start_date: chrono::NaiveDate,
@@ -793,6 +803,11 @@ struct UploadedAttachment {
     file_name: String,
     mime_type: Option<String>,
     bytes: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct RichTextImageUploadResponse {
+    url: String,
 }
 
 async fn list_tasks<C, R, T>(
@@ -843,12 +858,19 @@ where
     T: TaskRepository,
 {
     require_current_user(&state, &request)?;
-    Ok(HttpResponse::Ok().json(
-        tasks
-            .get_task_detail(path.into_inner())
+    let mut detail = tasks
+        .get_task_detail(path.into_inner())
+        .await
+        .map_err(task_error_to_app)?;
+    if detail.task.creator_name.is_none() {
+        detail.task.creator_name = state
+            .users
+            .get_user(detail.task.creator_id)
             .await
-            .map_err(task_error_to_app)?,
-    ))
+            .map_err(user_error_to_app)?
+            .map(|user| user.name);
+    }
+    Ok(HttpResponse::Ok().json(detail))
 }
 
 async fn upload_task_attachment<C, R, T, S>(
@@ -898,6 +920,59 @@ where
             .await
             .map_err(task_error_to_app)?,
     ))
+}
+
+async fn upload_rich_text_image<C, R, S>(
+    state: web::Data<AppState<C, R>>,
+    storage: web::Data<S>,
+    request: HttpRequest,
+    payload: Multipart,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    S: AttachmentStorage,
+{
+    let current_user = require_current_user(&state, &request)?;
+    if !current_user.role.has(Permission::UploadTaskAttachment) {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+
+    let uploaded = read_uploaded_image(payload).await?;
+    let file_name = build_rich_text_image_file_name(&uploaded);
+    let object_key = build_rich_text_image_object_key(&file_name);
+    storage
+        .put_object(&object_key, uploaded.bytes, uploaded.mime_type.as_deref())
+        .await
+        .map_err(storage_upload_error)?;
+
+    Ok(HttpResponse::Ok().json(RichTextImageUploadResponse {
+        url: format!("/api/rich-text/images/{file_name}"),
+    }))
+}
+
+async fn download_rich_text_image<C, R, S>(
+    state: web::Data<AppState<C, R>>,
+    storage: web::Data<S>,
+    request: HttpRequest,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    S: AttachmentStorage,
+{
+    require_current_user(&state, &request)?;
+    let object_key = build_rich_text_image_object_key(&sanitize_file_name(&path.into_inner()));
+    let object = storage
+        .get_object(&object_key)
+        .await
+        .map_err(storage_download_error)?;
+    let mut response = HttpResponse::Ok();
+    if let Some(mime_type) = object.mime_type {
+        response.content_type(mime_type);
+    }
+    Ok(response.body(object.bytes))
 }
 
 async fn download_task_attachment<C, R, T, S>(
@@ -1077,6 +1152,10 @@ where
             project_id: payload.project_id,
             title: payload.title.trim().to_string(),
             assignee_id: payload.assignee_id,
+            assignee_ids: payload
+                .assignee_ids
+                .clone()
+                .unwrap_or_else(|| vec![payload.assignee_id]),
             status: payload.status,
             priority: payload.priority,
             start_date: payload.start_date,
@@ -1149,6 +1228,10 @@ where
                 project_id: payload.project_id,
                 title: payload.title.trim().to_string(),
                 assignee_id: payload.assignee_id,
+                assignee_ids: payload
+                    .assignee_ids
+                    .clone()
+                    .unwrap_or_else(|| vec![payload.assignee_id]),
                 status: payload.status,
                 priority: payload.priority,
                 start_date: payload.start_date,
@@ -1159,7 +1242,7 @@ where
         .await
         .map_err(task_error_to_app)?;
 
-    if previous.assignee_id != updated.assignee_id {
+    if previous.assignees != updated.assignees {
         TaskNotificationService::new(
             state.dingtalk.clone(),
             state.users.clone(),
@@ -1187,7 +1270,7 @@ where
     let current_user = require_current_user(&state, &request)?;
     let task = tasks.get_task(*path).await.map_err(task_error_to_app)?;
     if !current_user.role.has(Permission::UpdateAnyTaskStatus)
-        && task.assignee_id != current_user.id
+        && !task.assignees.iter().any(|assignee| assignee.id == current_user.id)
     {
         return Err(AppError::forbidden(ApiErrorCode::TaskNotAssignee));
     }
@@ -1294,8 +1377,54 @@ async fn read_uploaded_attachment(mut payload: Multipart) -> Result<UploadedAtta
     Err(AppError::bad_request(ApiErrorCode::ValidationFailed))
 }
 
+async fn read_uploaded_image(payload: Multipart) -> Result<UploadedAttachment, AppError> {
+    let uploaded = read_uploaded_attachment(payload).await?;
+    let is_image = uploaded
+        .mime_type
+        .as_deref()
+        .is_some_and(|mime_type| mime_type.starts_with("image/"));
+    if is_image {
+        Ok(uploaded)
+    } else {
+        Err(AppError::bad_request(ApiErrorCode::ValidationFailed))
+    }
+}
+
 fn build_attachment_object_key(task_id: Uuid, file_name: &str) -> String {
     format!("tasks/{task_id}/attachments/{}-{file_name}", Uuid::new_v4())
+}
+
+fn build_rich_text_image_object_key(file_name: &str) -> String {
+    format!("rich-text/images/{file_name}")
+}
+
+fn build_rich_text_image_file_name(uploaded: &UploadedAttachment) -> String {
+    let extension = uploaded
+        .file_name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| {
+            !extension.is_empty()
+                && extension.len() <= 10
+                && extension
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+        .map(str::to_ascii_lowercase)
+        .or_else(|| image_extension_from_mime(uploaded.mime_type.as_deref()).map(str::to_string))
+        .unwrap_or_else(|| "png".to_string());
+    format!("{}.{}", Uuid::new_v4(), extension)
+}
+
+fn image_extension_from_mime(mime_type: Option<&str>) -> Option<&'static str> {
+    match mime_type? {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        _ => None,
+    }
 }
 
 fn sanitize_file_name(file_name: &str) -> String {

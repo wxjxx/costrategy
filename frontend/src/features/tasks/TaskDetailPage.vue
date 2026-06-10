@@ -1,18 +1,32 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
+import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { useQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
-import { Download, Edit, Refresh, UploadFilled } from "@element-plus/icons-vue";
+import { Delete, Download, Edit, UploadFilled } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import StatusTag from "@/components/StatusTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
-import { getDisplayStatus } from "@/features/tasks/taskWorkflow";
+import {
+  getDisplayStatus,
+  primaryTaskAssigneeName,
+  taskAssigneeNames,
+} from "@/features/tasks/taskWorkflow";
+import { clampPage, pageRows } from "@/utils/pagination";
+import { activityActionLabel } from "./activityLabels";
 import { renderDescriptionHtml } from "./richText";
 
 const route = useRoute();
 const router = useRouter();
+const queryClient = useQueryClient();
 const taskId = computed(() => String(route.params.id));
+const commentContent = ref("");
+const uploadInput = ref<HTMLInputElement>();
+const previewImageUrl = ref("");
+const attachmentPage = ref(1);
+const attachmentPageSize = ref(10);
 
 const { data: detail } = useQuery({
   queryKey: ["task-detail", taskId],
@@ -23,6 +37,93 @@ const task = computed(() => detail.value?.task);
 const descriptionHtml = computed(() =>
   task.value ? renderDescriptionHtml(task.value.description_json) : "",
 );
+const pagedAttachments = computed(() =>
+  pageRows(detail.value?.attachments ?? [], attachmentPage.value, attachmentPageSize.value),
+);
+
+watch(
+  () => detail.value?.attachments.length ?? 0,
+  (total) => {
+    attachmentPage.value = clampPage(attachmentPage.value, total, attachmentPageSize.value);
+  },
+);
+
+watch(attachmentPageSize, () => {
+  attachmentPage.value = 1;
+});
+
+function refreshTaskQueries() {
+  void queryClient.invalidateQueries({ queryKey: ["task-detail"] });
+  void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+}
+
+const commentMutation = useMutation({
+  mutationFn: () => api.createTaskComment(taskId.value, commentContent.value),
+  onSuccess: () => {
+    commentContent.value = "";
+    ElMessage.success("评论已发布");
+    refreshTaskQueries();
+  },
+  onError: () => ElMessage.error("评论发布失败，请查看后端日志"),
+});
+
+const uploadMutation = useMutation({
+  mutationFn: (file: File) => api.uploadTaskAttachment(taskId.value, file),
+  onSuccess: () => {
+    ElMessage.success("附件已上传");
+    refreshTaskQueries();
+  },
+  onError: () => ElMessage.error("附件上传失败，请查看后端日志"),
+});
+
+const deleteMutation = useMutation({
+  mutationFn: (attachmentId: string) =>
+    api.deleteTaskAttachment(taskId.value, attachmentId),
+  onSuccess: () => {
+    ElMessage.success("附件已删除");
+    refreshTaskQueries();
+  },
+  onError: () => ElMessage.error("附件删除失败，请查看后端日志"),
+});
+
+async function downloadAttachment(attachmentId: string, fileName: string) {
+  try {
+    const blob = await api.downloadTaskAttachment(taskId.value, attachmentId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    ElMessage.error("附件下载失败，请查看后端日志");
+  }
+}
+
+function selectUploadFile() {
+  uploadInput.value?.click();
+}
+
+function uploadSelectedFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) uploadMutation.mutate(file);
+  input.value = "";
+}
+
+function submitComment() {
+  if (!commentContent.value.trim()) {
+    ElMessage.warning("请输入评论内容");
+    return;
+  }
+  commentMutation.mutate();
+}
+
+function openRichContentImage(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement)) return;
+  previewImageUrl.value = target.currentSrc || target.src;
+}
 </script>
 
 <template>
@@ -43,13 +144,15 @@ const descriptionHtml = computed(() =>
       <h3>基本信息</h3>
       <div class="info-grid">
         <span>所属项目：{{ task.project_name }}</span>
-        <span class="with-avatar">负责人：<UserAvatar :name="task.assignee_name" />{{ task.assignee_name }}</span>
+        <span class="with-avatar">
+          负责人：<UserAvatar :name="primaryTaskAssigneeName(task)" />{{ taskAssigneeNames(task) }}
+        </span>
         <span>状态：<StatusTag :status="getDisplayStatus(task)" /></span>
         <span>优先级：<PriorityTag :priority="task.priority" /></span>
         <span>开始日期：{{ task.start_date }}</span>
         <span>截止日期：{{ task.due_date }}</span>
         <span>是否延期：{{ task.is_overdue && task.status !== "done" ? "是" : "否" }}</span>
-        <span>创建人：{{ task.creator_id }}</span>
+        <span>创建人：{{ task.creator_name || task.creator_id }}</span>
       </div>
     </section>
 
@@ -57,22 +160,30 @@ const descriptionHtml = computed(() =>
       <section class="left-stack">
         <article class="content-card">
           <h3>任务描述</h3>
-          <div class="rich-content" v-html="descriptionHtml" />
-          <div class="mini-gantt">
-            <div class="mini-gantt-header">
-              <span>项目：{{ task.project_name || "-" }}</span>
-              <span>缩放：周</span>
-              <span>{{ task.start_date }} ~ {{ task.due_date }}</span>
-            </div>
-            <div class="mini-gantt-body">
-              <span v-for="index in 7" :key="index" :style="{ width: `${16 + index * 8}%` }" />
-            </div>
-          </div>
+          <div
+            v-if="descriptionHtml"
+            class="rich-content rich-content-detail"
+            v-html="descriptionHtml"
+            @click="openRichContentImage"
+          />
+          <p v-else class="empty-text">暂无任务描述</p>
         </article>
 
         <article class="content-card">
-          <h3>附件</h3>
-          <ElTable :data="detail.attachments" size="small">
+          <div class="section-heading">
+            <h3>附件</h3>
+            <ElButton
+              type="primary"
+              plain
+              :loading="uploadMutation.isPending.value"
+              @click="selectUploadFile"
+            >
+              <ElIcon><UploadFilled /></ElIcon>
+              上传附件
+            </ElButton>
+          </div>
+          <input ref="uploadInput" class="hidden-file-input" type="file" @change="uploadSelectedFile" />
+          <ElTable :data="pagedAttachments" size="small">
             <ElTableColumn prop="file_name" label="文件名" />
             <ElTableColumn label="文件大小" width="120">
               <template #default="{ row }">{{ (row.file_size / 1024 / 1024).toFixed(2) }} MB</template>
@@ -80,12 +191,27 @@ const descriptionHtml = computed(() =>
             <ElTableColumn prop="mime_type" label="文件类型" width="100" />
             <ElTableColumn prop="uploader_name" label="上传人" width="100" />
             <ElTableColumn prop="created_at" label="上传时间" width="170" />
-            <ElTableColumn label="操作" width="90">
-              <template #default>
-                <ElButton link type="primary"><ElIcon><Download /></ElIcon></ElButton>
+            <ElTableColumn label="操作" width="120">
+              <template #default="{ row }">
+                <ElButton link type="primary" @click="downloadAttachment(row.id, row.file_name)">
+                  <ElIcon><Download /></ElIcon>
+                </ElButton>
+                <ElButton link type="danger" @click="deleteMutation.mutate(row.id)">
+                  <ElIcon><Delete /></ElIcon>
+                </ElButton>
               </template>
             </ElTableColumn>
           </ElTable>
+          <div class="table-footer">
+            <ElPagination
+              v-model:current-page="attachmentPage"
+              v-model:page-size="attachmentPageSize"
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              :page-sizes="[10, 20, 30, 50]"
+              :total="detail.attachments.length"
+            />
+          </div>
         </article>
       </section>
 
@@ -101,20 +227,20 @@ const descriptionHtml = computed(() =>
             <time>{{ comment.created_at.slice(0, 16).replace("T", " ") }}</time>
           </div>
           <div class="comment-input">
-            <ElInput placeholder="请输入评论内容..." />
-            <ElButton type="primary">发表评论</ElButton>
+            <ElInput v-model="commentContent" placeholder="请输入评论内容..." />
+            <ElButton type="primary" :loading="commentMutation.isPending.value" @click="submitComment">发表评论</ElButton>
           </div>
         </article>
 
-        <article class="content-card">
+        <article class="content-card activity-card">
           <h3>操作记录</h3>
-          <ElTimeline>
+          <ElTimeline class="activity-timeline">
             <ElTimelineItem
               v-for="log in detail.activity_logs"
               :key="log.id"
               :timestamp="log.created_at.slice(0, 16).replace('T', ' ')"
             >
-              <strong>{{ log.action }}</strong>
+              <strong>{{ activityActionLabel(log.action) }}</strong>
               <p>{{ log.actor_name }}</p>
             </ElTimelineItem>
           </ElTimeline>
@@ -122,10 +248,11 @@ const descriptionHtml = computed(() =>
       </aside>
     </div>
 
-    <div class="bottom-actions">
-      <ElButton type="primary"><ElIcon><Refresh /></ElIcon>更新状态</ElButton>
-      <ElButton type="primary" plain><ElIcon><UploadFilled /></ElIcon>上传附件</ElButton>
-      <ElButton type="primary" plain>发表评论</ElButton>
-    </div>
+    <ElImageViewer
+      v-if="previewImageUrl"
+      :url-list="[previewImageUrl]"
+      hide-on-click-modal
+      @close="previewImageUrl = ''"
+    />
   </div>
 </template>

@@ -206,6 +206,25 @@ fn paths() -> Value {
                 response_ref("TaskComment")
             )
         },
+        "/api/rich-text/images": {
+            "post": secured_operation(
+                "Attachments",
+                "上传富文本图片",
+                "上传富文本编辑器中的本地或粘贴图片到 RustFS，并返回可用于描述 JSON 的后端图片 URL",
+                multipart_file_body(),
+                response_ref("RichTextImageUploadResponse")
+            )
+        },
+        "/api/rich-text/images/{file_name}": {
+            "get": secured_operation_with_params(
+                "Attachments",
+                "读取富文本图片",
+                "通过后端鉴权代理读取 RustFS 中的富文本图片",
+                vec![path_param("file_name", "string", "图片文件名")],
+                Value::Null,
+                binary_response()
+            )
+        },
         "/api/tasks/{task_id}/attachments": {
             "post": secured_operation_with_params(
                 "Attachments",
@@ -362,6 +381,10 @@ fn components() -> Value {
                 required_prop("project_id", uuid_schema()),
                 required_prop("title", string_schema()),
                 required_prop("assignee_id", uuid_schema()),
+                optional_prop(
+                    "assignee_ids",
+                    json!({ "type": "array", "items": uuid_schema() }),
+                ),
                 required_prop("status", enum_schema(vec!["todo", "in_progress", "done"])),
                 required_prop("priority", enum_schema(vec!["low", "medium", "high"])),
                 required_prop("start_date", date_schema()),
@@ -395,6 +418,9 @@ fn components() -> Value {
                 required_prop("uploader_id", uuid_schema()),
                 optional_prop("uploader_name", string_schema()),
                 required_prop("created_at", datetime_schema())
+            ]),
+            "RichTextImageUploadResponse": object_schema(vec![
+                required_prop("url", string_schema())
             ]),
             "TaskActivityLog": object_schema(vec![
                 required_prop("id", uuid_schema()),
@@ -639,6 +665,16 @@ fn task_schema() -> Value {
         required_prop("title", string_schema()),
         required_prop("assignee_id", uuid_schema()),
         optional_prop("assignee_name", string_schema()),
+        required_prop(
+            "assignees",
+            json!({
+                "type": "array",
+                "items": object_schema(vec![
+                    required_prop("id", uuid_schema()),
+                    optional_prop("name", string_schema())
+                ])
+            }),
+        ),
         required_prop("status", enum_schema(vec!["todo", "in_progress", "done"])),
         required_prop("priority", enum_schema(vec!["low", "medium", "high"])),
         required_prop("start_date", date_schema()),
@@ -648,6 +684,7 @@ fn task_schema() -> Value {
             json!({ "type": "object", "additionalProperties": true }),
         ),
         required_prop("creator_id", uuid_schema()),
+        optional_prop("creator_name", string_schema()),
         required_prop("archived", json!({ "type": "boolean" })),
         required_prop("is_overdue", json!({ "type": "boolean" })),
         required_prop("display_status", string_schema()),

@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { VueQueryPlugin } from "@tanstack/vue-query";
 import ElementPlus from "element-plus";
+import zhCn from "element-plus/es/locale/lang/zh-cn";
 import "element-plus/dist/index.css";
 import "./styles/main.css";
 import App from "./App.vue";
@@ -18,5 +19,5 @@ createApp(App)
   .use(createPinia())
   .use(VueQueryPlugin)
   .use(router)
-  .use(ElementPlus)
+  .use(ElementPlus, { locale: zhCn })
   .mount("#app");

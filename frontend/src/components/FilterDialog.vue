@@ -52,7 +52,7 @@ function resetFilters() {
   <ElDialog
     :model-value="modelValue"
     title="筛选条件"
-    width="520"
+    width="720px"
     class="filter-dialog"
     @update:model-value="emit('update:modelValue', $event)"
   >

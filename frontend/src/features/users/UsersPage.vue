@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { Refresh, Search } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
@@ -13,6 +13,8 @@ const { data: users } = useQuery({ queryKey: ["users"], queryFn: api.users });
 const keyword = ref("");
 const role = ref<UserRole | "">("");
 const status = ref<UserStatus | "">("");
+const currentPage = ref(1);
+const pageSize = ref(10);
 const roleDialog = ref(false);
 const selectedUserId = ref("");
 const selectedRole = ref<UserRole>("employee");
@@ -25,6 +27,19 @@ const filteredUsers = computed(() =>
     return true;
   }),
 );
+const pagedUsers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  return filteredUsers.value.slice(start, start + pageSize.value);
+});
+
+watch([keyword, role, status], () => {
+  currentPage.value = 1;
+});
+
+watch(filteredUsers, (items) => {
+  const maxPage = Math.max(1, Math.ceil(items.length / pageSize.value));
+  if (currentPage.value > maxPage) currentPage.value = maxPage;
+});
 const latestSyncedAt = computed(() => {
   const timestamps = (users.value ?? [])
     .map((user) => user.last_synced_at)
@@ -62,6 +77,13 @@ function openRoleDialog(userId: string, userRole: UserRole) {
   selectedRole.value = userRole;
   roleDialog.value = true;
 }
+
+function resetUserFilters() {
+  keyword.value = "";
+  role.value = "";
+  status.value = "";
+  currentPage.value = 1;
+}
 </script>
 
 <template>
@@ -75,14 +97,14 @@ function openRoleDialog(userId: string, userRole: UserRole) {
     <section class="content-card search-panel">
       <ElForm label-position="top">
         <ElRow :gutter="34">
-          <ElCol :span="7">
+          <ElCol :xs="24" :sm="12" :md="6">
             <ElFormItem label="关键词（姓名/手机号）">
               <ElInput v-model="keyword" placeholder="请输入姓名或手机号">
                 <template #suffix><ElIcon><Search /></ElIcon></template>
               </ElInput>
             </ElFormItem>
           </ElCol>
-          <ElCol :span="7">
+          <ElCol :xs="24" :sm="12" :md="6">
             <ElFormItem label="系统角色">
               <ElSelect v-model="role" clearable placeholder="请选择">
                 <ElOption label="员工" value="employee" />
@@ -91,7 +113,7 @@ function openRoleDialog(userId: string, userRole: UserRole) {
               </ElSelect>
             </ElFormItem>
           </ElCol>
-          <ElCol :span="7">
+          <ElCol :xs="24" :sm="12" :md="6">
             <ElFormItem label="用户状态">
               <ElSelect v-model="status" clearable placeholder="请选择">
                 <ElOption label="正常" value="active" />
@@ -99,8 +121,8 @@ function openRoleDialog(userId: string, userRole: UserRole) {
               </ElSelect>
             </ElFormItem>
           </ElCol>
-          <ElCol :span="3" class="search-actions">
-            <ElButton>重置</ElButton>
+          <ElCol :xs="24" :sm="12" :md="6" class="search-actions">
+            <ElButton @click="resetUserFilters">重置</ElButton>
             <ElButton type="primary">搜索</ElButton>
           </ElCol>
         </ElRow>
@@ -115,7 +137,7 @@ function openRoleDialog(userId: string, userRole: UserRole) {
           立即同步
         </ElButton>
       </div>
-      <ElTable :data="filteredUsers">
+      <ElTable :data="pagedUsers">
         <ElTableColumn label="头像" width="88"><template #default="{ row }"><UserAvatar :name="row.name" :size="42" /></template></ElTableColumn>
         <ElTableColumn prop="name" label="姓名" width="110" />
         <ElTableColumn prop="mobile" label="手机号" width="150" />
@@ -127,8 +149,6 @@ function openRoleDialog(userId: string, userRole: UserRole) {
             {{ row.status === "active" ? "正常" : "停用" }}
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="dingtalk_user_id" label="userId" width="150" />
-        <ElTableColumn prop="union_id" label="unionId" min-width="220" />
         <ElTableColumn label="操作" width="160">
           <template #default="{ row }">
             <ElButton link type="primary" @click="openRoleDialog(row.id, row.role)">设置角色</ElButton>
@@ -143,8 +163,14 @@ function openRoleDialog(userId: string, userRole: UserRole) {
         </ElTableColumn>
       </ElTable>
       <div class="table-footer">
-        <span>共 {{ filteredUsers.length }} 条</span>
-        <ElPagination layout="prev, pager, next, jumper" :total="filteredUsers.length" :page-size="10" />
+        <ElPagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          :page-sizes="[10, 20, 30, 50]"
+          :total="filteredUsers.length"
+        />
       </div>
     </section>
 

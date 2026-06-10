@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
-use std::collections::HashMap;
+use sqlx::{PgPool, Postgres, Row, Transaction};
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -37,15 +37,23 @@ pub struct Task {
     pub title: String,
     pub assignee_id: Uuid,
     pub assignee_name: Option<String>,
+    pub assignees: Vec<TaskAssignee>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub start_date: NaiveDate,
     pub due_date: NaiveDate,
     pub description_json: Value,
     pub creator_id: Uuid,
+    pub creator_name: Option<String>,
     pub archived: bool,
     pub is_overdue: bool,
     pub display_status: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct TaskAssignee {
+    pub id: Uuid,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -107,6 +115,7 @@ pub struct CreateTask {
     pub project_id: Uuid,
     pub title: String,
     pub assignee_id: Uuid,
+    pub assignee_ids: Vec<Uuid>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub start_date: NaiveDate,
@@ -120,6 +129,7 @@ pub struct UpdateTask {
     pub project_id: Uuid,
     pub title: String,
     pub assignee_id: Uuid,
+    pub assignee_ids: Vec<Uuid>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub start_date: NaiveDate,
@@ -242,6 +252,7 @@ struct StoredTask {
     project_owner_id: Option<Uuid>,
     title: String,
     assignee_id: Uuid,
+    assignee_ids: Vec<Uuid>,
     status: TaskStatus,
     priority: TaskPriority,
     start_date: NaiveDate,
@@ -403,6 +414,7 @@ impl TaskRepository for MemoryTaskRepository {
             project_owner_id: None,
             title: task.title,
             assignee_id: task.assignee_id,
+            assignee_ids: normalize_assignee_ids(task.assignee_id, task.assignee_ids),
             status: task.status,
             priority: task.priority,
             start_date: task.start_date,
@@ -562,6 +574,7 @@ impl TaskRepository for MemoryTaskRepository {
         existing.project_id = task.project_id;
         existing.title = task.title;
         existing.assignee_id = task.assignee_id;
+        existing.assignee_ids = normalize_assignee_ids(task.assignee_id, task.assignee_ids);
         existing.status = task.status;
         existing.priority = task.priority;
         existing.start_date = task.start_date;
@@ -648,6 +661,7 @@ impl MemoryTaskRepository {
             project_owner_id,
             title: task.title,
             assignee_id: task.assignee_id,
+            assignee_ids: normalize_assignee_ids(task.assignee_id, task.assignee_ids),
             status: task.status,
             priority: task.priority,
             start_date: task.start_date,
@@ -676,26 +690,49 @@ impl SqlxTaskRepository {
     }
 }
 
+fn task_select_sql(from_clause: &str) -> String {
+    format!(
+        "select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
+                t.assignee_id, u.name as assignee_name,
+                (
+                    select array_agg(ta.user_id order by ta.position)
+                    from task_assignees ta
+                    where ta.task_id = t.id
+                ) as assignee_ids,
+                (
+                    select array_agg(assignee_user.name order by ta.position)
+                    from task_assignees ta
+                    join users assignee_user on assignee_user.id = ta.user_id
+                    where ta.task_id = t.id
+                ) as assignee_names,
+                t.status, t.priority, t.start_date, t.due_date, t.description_json,
+                t.creator_id, creator.name as creator_name, t.archived_at
+         {from_clause}
+         join projects p on p.id = t.project_id
+         join users u on u.id = t.assignee_id
+         join users creator on creator.id = t.creator_id"
+    )
+}
+
 #[async_trait]
 impl TaskRepository for SqlxTaskRepository {
     async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>, TaskRepositoryError> {
         let order_by = task_order_by(filter.sort);
         let query = format!(
-            "select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from tasks t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id
+            "{} 
              where ($8::bool = true or t.archived_at is null)
                and ($1::uuid is null or t.project_id = $1)
-               and ($2::uuid is null or t.assignee_id = $2)
+               and ($2::uuid is null or exists (
+                    select 1 from task_assignees filter_assignee
+                    where filter_assignee.task_id = t.id and filter_assignee.user_id = $2
+               ))
                and ($3::text is null or t.status = $3)
                and ($4::text is null or t.priority = $4)
                and ($5::date is null or t.due_date >= $5)
                and ($6::date is null or t.start_date <= $6)
                and ($7::text is null or t.title ilike ('%' || $7 || '%'))
              order by {order_by}",
+            task_select_sql("from tasks t"),
         );
         let rows = sqlx::query(&query)
             .bind(filter.project_id)
@@ -718,16 +755,14 @@ impl TaskRepository for SqlxTaskRepository {
         due_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
         let rows = sqlx::query(
-            "select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from tasks t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id
+            &format!(
+                "{} 
              where t.archived_at is null
                and t.status <> 'done'
                and t.due_date = $1
              order by t.due_date asc, t.title asc",
+                task_select_sql("from tasks t"),
+            ),
         )
         .bind(due_date)
         .fetch_all(&self.pool)
@@ -742,16 +777,14 @@ impl TaskRepository for SqlxTaskRepository {
         local_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
         let rows = sqlx::query(
-            "select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from tasks t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id
+            &format!(
+                "{} 
              where t.archived_at is null
                and t.status <> 'done'
                and t.due_date < $1
              order by t.due_date asc, t.title asc",
+                task_select_sql("from tasks t"),
+            ),
         )
         .bind(local_date)
         .fetch_all(&self.pool)
@@ -763,13 +796,10 @@ impl TaskRepository for SqlxTaskRepository {
 
     async fn get_task(&self, id: Uuid) -> Result<Task, TaskRepositoryError> {
         let row = sqlx::query(
-            "select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from tasks t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id
-             where t.id = $1 and t.archived_at is null",
+            &format!(
+                "{} where t.id = $1 and t.archived_at is null",
+                task_select_sql("from tasks t"),
+            ),
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -837,6 +867,7 @@ impl TaskRepository for SqlxTaskRepository {
 
     async fn create_task(&self, task: CreateTask) -> Result<Task, TaskRepositoryError> {
         validate_date_range(task.start_date, task.due_date)?;
+        let assignee_ids = normalize_assignee_ids(task.assignee_id, task.assignee_ids);
         let mut tx = self
             .pool
             .begin()
@@ -844,7 +875,8 @@ impl TaskRepository for SqlxTaskRepository {
             .map_err(|_| TaskRepositoryError::Database)?;
         let task_id = Uuid::new_v4();
         let row = sqlx::query(
-            "with inserted as (
+            &format!(
+                "with inserted as (
                 insert into tasks (
                     id, project_id, title, assignee_id, status, priority, start_date, due_date,
                     description_json, creator_id, updated_at
@@ -853,12 +885,9 @@ impl TaskRepository for SqlxTaskRepository {
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
-             select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from inserted t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id",
+             {}",
+                task_select_sql("from inserted t"),
+            ),
         )
         .bind(task_id)
         .bind(task.project_id)
@@ -873,11 +902,13 @@ impl TaskRepository for SqlxTaskRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
+        replace_task_assignees(&mut tx, task_id, &assignee_ids).await?;
         insert_activity_log(&mut tx, task_id, task.creator_id, "task_created").await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        row_to_task(row)
+        let created = row_to_task(row)?;
+        self.get_task(created.id).await
     }
 
     async fn create_comment(
@@ -1051,13 +1082,15 @@ impl TaskRepository for SqlxTaskRepository {
         task: UpdateTask,
     ) -> Result<Task, TaskRepositoryError> {
         validate_date_range(task.start_date, task.due_date)?;
+        let assignee_ids = normalize_assignee_ids(task.assignee_id, task.assignee_ids);
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
         let row = sqlx::query(
-            "with updated as (
+            &format!(
+                "with updated as (
                 update tasks set
                     project_id = $2,
                     title = $3,
@@ -1072,12 +1105,9 @@ impl TaskRepository for SqlxTaskRepository {
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
-             select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from updated t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id",
+             {}",
+                task_select_sql("from updated t"),
+            ),
         )
         .bind(id)
         .bind(task.project_id)
@@ -1094,11 +1124,13 @@ impl TaskRepository for SqlxTaskRepository {
         let Some(row) = row else {
             return Err(TaskRepositoryError::NotFound);
         };
+        replace_task_assignees(&mut tx, id, &assignee_ids).await?;
         insert_activity_log(&mut tx, id, actor_id, "schedule_changed").await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        row_to_task(row)
+        let updated = row_to_task(row)?;
+        self.get_task(updated.id).await
     }
 
     async fn update_task_status(
@@ -1129,18 +1161,16 @@ impl TaskRepository for SqlxTaskRepository {
         )?;
 
         let row = sqlx::query(
-            "with updated as (
+            &format!(
+                "with updated as (
                 update tasks set status = $2, updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
-             select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from updated t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id",
+             {}",
+                task_select_sql("from updated t"),
+            ),
         )
         .bind(id)
         .bind(status.as_str())
@@ -1161,18 +1191,16 @@ impl TaskRepository for SqlxTaskRepository {
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
         let row = sqlx::query(
-            "with archived as (
+            &format!(
+                "with archived as (
                 update tasks set archived_at = now(), updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
-             select t.id, t.project_id, p.name as project_name, p.owner_id as project_owner_id, t.title,
-                    t.assignee_id, u.name as assignee_name, t.status, t.priority,
-                    t.start_date, t.due_date, t.description_json, t.creator_id, t.archived_at
-             from archived t
-             join projects p on p.id = t.project_id
-             join users u on u.id = t.assignee_id",
+             {}",
+                task_select_sql("from archived t"),
+            ),
         )
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -1200,12 +1228,18 @@ impl From<StoredTask> for Task {
             title: task.title,
             assignee_id: task.assignee_id,
             assignee_name: None,
+            assignees: task
+                .assignee_ids
+                .into_iter()
+                .map(|id| TaskAssignee { id, name: None })
+                .collect(),
             status: task.status,
             priority: task.priority,
             start_date: task.start_date,
             due_date: task.due_date,
             description_json: task.description_json,
             creator_id: task.creator_id,
+            creator_name: None,
             archived: task.archived,
             is_overdue,
             display_status: display_status(task.status, is_overdue).to_string(),
@@ -1476,7 +1510,7 @@ fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
         }
     }
     if let Some(assignee_id) = filter.assignee_id {
-        if task.assignee_id != assignee_id {
+        if !task.assignee_ids.contains(&assignee_id) {
             return false;
         }
     }
@@ -1555,6 +1589,33 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
         .try_get("due_date")
         .map_err(|_| TaskRepositoryError::Database)?;
     let is_overdue = compute_overdue(status, due_date);
+    let assignee_id: Uuid = row
+        .try_get("assignee_id")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let assignee_name: Option<String> = row
+        .try_get("assignee_name")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let assignee_ids = row
+        .try_get::<Option<Vec<Uuid>>, _>("assignee_ids")
+        .map_err(|_| TaskRepositoryError::Database)?
+        .unwrap_or_else(|| vec![assignee_id]);
+    let assignee_names = row
+        .try_get::<Option<Vec<String>>, _>("assignee_names")
+        .map_err(|_| TaskRepositoryError::Database)?
+        .unwrap_or_else(|| {
+            assignee_name
+                .clone()
+                .map(|name| vec![name])
+                .unwrap_or_default()
+        });
+    let assignees = assignee_ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| TaskAssignee {
+            id: *id,
+            name: assignee_names.get(index).cloned(),
+        })
+        .collect();
 
     Ok(Task {
         id: row
@@ -1572,12 +1633,9 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
         title: row
             .try_get("title")
             .map_err(|_| TaskRepositoryError::Database)?,
-        assignee_id: row
-            .try_get("assignee_id")
-            .map_err(|_| TaskRepositoryError::Database)?,
-        assignee_name: row
-            .try_get("assignee_name")
-            .map_err(|_| TaskRepositoryError::Database)?,
+        assignee_id,
+        assignee_name,
+        assignees,
         status,
         priority: priority
             .parse()
@@ -1592,6 +1650,9 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
         creator_id: row
             .try_get("creator_id")
             .map_err(|_| TaskRepositoryError::Database)?,
+        creator_name: row
+            .try_get("creator_name")
+            .map_err(|_| TaskRepositoryError::Database)?,
         archived: row
             .try_get::<Option<chrono::DateTime<Utc>>, _>("archived_at")
             .map_err(|_| TaskRepositoryError::Database)?
@@ -1599,6 +1660,45 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
         is_overdue,
         display_status: display_status(status, is_overdue).to_string(),
     })
+}
+
+fn normalize_assignee_ids(primary_assignee_id: Uuid, assignee_ids: Vec<Uuid>) -> Vec<Uuid> {
+    let mut normalized = if assignee_ids.is_empty() {
+        vec![primary_assignee_id]
+    } else {
+        assignee_ids
+    };
+    if !normalized.contains(&primary_assignee_id) {
+        normalized.insert(0, primary_assignee_id);
+    }
+    let mut seen = HashSet::new();
+    normalized.retain(|assignee_id| seen.insert(*assignee_id));
+    normalized
+}
+
+async fn replace_task_assignees(
+    tx: &mut Transaction<'_, Postgres>,
+    task_id: Uuid,
+    assignee_ids: &[Uuid],
+) -> Result<(), TaskRepositoryError> {
+    sqlx::query("delete from task_assignees where task_id = $1")
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+
+    for (position, assignee_id) in assignee_ids.iter().enumerate() {
+        sqlx::query(
+            "insert into task_assignees (task_id, user_id, position) values ($1, $2, $3)",
+        )
+        .bind(task_id)
+        .bind(*assignee_id)
+        .bind(position as i32)
+        .execute(&mut **tx)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+    }
+    Ok(())
 }
 
 fn row_to_comment(row: sqlx::postgres::PgRow) -> Result<TaskComment, TaskRepositoryError> {

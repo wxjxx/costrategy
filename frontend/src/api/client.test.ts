@@ -65,4 +65,130 @@ describe("api client", () => {
       token: "admin-token-1",
     });
   });
+
+  it("sends complete project create and update payloads to backend routes", async () => {
+    const project = {
+      id: "project-1",
+      code: "PRJ-001",
+      name: "项目管理系统",
+      owner_id: "user-1",
+      description: "内部协作系统",
+      start_date: "2026-06-01",
+      end_date: "2026-06-30",
+      status: "active" as const,
+    };
+    const post = vi.spyOn(http, "post").mockResolvedValueOnce({ data: project });
+    const put = vi.spyOn(http, "put").mockResolvedValueOnce({ data: project });
+
+    await expect(
+      api.createProject({
+        code: "PRJ-001",
+        name: "项目管理系统",
+        owner_id: "user-1",
+        description: "内部协作系统",
+        start_date: "2026-06-01",
+        end_date: "2026-06-30",
+        status: "active",
+      }),
+    ).resolves.toBe(project);
+    await expect(
+      api.updateProject("project-1", {
+        name: "项目管理系统",
+        owner_id: "user-1",
+        description: "内部协作系统",
+        start_date: "2026-06-01",
+        end_date: "2026-06-30",
+        status: "completed",
+      }),
+    ).resolves.toBe(project);
+
+    expect(post).toHaveBeenCalledWith("/projects", {
+      code: "PRJ-001",
+      name: "项目管理系统",
+      owner_id: "user-1",
+      description: "内部协作系统",
+      start_date: "2026-06-01",
+      end_date: "2026-06-30",
+      status: "active",
+    });
+    expect(put).toHaveBeenCalledWith("/projects/project-1", {
+      name: "项目管理系统",
+      owner_id: "user-1",
+      description: "内部协作系统",
+      start_date: "2026-06-01",
+      end_date: "2026-06-30",
+      status: "completed",
+    });
+  });
+
+  it("updates settings with the backend batch payload", async () => {
+    const response = { settings: [], connection_status: { dingtalk: "not_checked", rustfs: "configured" } };
+    const put = vi.spyOn(http, "put").mockResolvedValue({ data: response });
+
+    await expect(
+      api.updateSettings([
+        { key: "dingtalk.corp_id", value: "corp-1" },
+        { key: "rustfs.bucket", value: "costrategy" },
+      ]),
+    ).resolves.toBe(response);
+
+    expect(put).toHaveBeenCalledWith("/settings", {
+      settings: [
+        { key: "dingtalk.corp_id", value: "corp-1" },
+        { key: "rustfs.bucket", value: "costrategy" },
+      ],
+    });
+  });
+
+  it("calls task collaboration attachment and comment endpoints", async () => {
+    const comment = {
+      id: "comment-1",
+      task_id: "task-1",
+      author_id: "user-1",
+      content: "已完成联调",
+      created_at: "2026-06-10T08:00:00Z",
+    };
+    const attachment = {
+      id: "attachment-1",
+      task_id: "task-1",
+      file_name: "需求说明.txt",
+      file_size: 128,
+      uploader_id: "user-1",
+      created_at: "2026-06-10T08:00:00Z",
+    };
+    const blob = new Blob(["file-content"], { type: "text/plain" });
+    const post = vi
+      .spyOn(http, "post")
+      .mockResolvedValueOnce({ data: comment })
+      .mockResolvedValueOnce({ data: attachment });
+    const get = vi.spyOn(http, "get").mockResolvedValueOnce({ data: blob });
+    const del = vi.spyOn(http, "delete").mockResolvedValueOnce({ data: attachment });
+    const file = new File(["file-content"], "需求说明.txt", { type: "text/plain" });
+
+    await expect(api.createTaskComment("task-1", "已完成联调")).resolves.toBe(comment);
+    await expect(api.uploadTaskAttachment("task-1", file)).resolves.toBe(attachment);
+    await expect(api.downloadTaskAttachment("task-1", "attachment-1")).resolves.toBe(blob);
+    await expect(api.deleteTaskAttachment("task-1", "attachment-1")).resolves.toBe(attachment);
+
+    expect(post).toHaveBeenNthCalledWith(1, "/tasks/task-1/comments", {
+      content: "已完成联调",
+    });
+    expect(post.mock.calls[1]?.[0]).toBe("/tasks/task-1/attachments");
+    expect(post.mock.calls[1]?.[1]).toBeInstanceOf(FormData);
+    expect(get).toHaveBeenCalledWith("/tasks/task-1/attachments/attachment-1/download", {
+      responseType: "blob",
+    });
+    expect(del).toHaveBeenCalledWith("/tasks/task-1/attachments/attachment-1");
+  });
+
+  it("uploads rich text images through a standalone RustFS endpoint", async () => {
+    const upload = { url: "/api/rich-text/images/image-1.png" };
+    const post = vi.spyOn(http, "post").mockResolvedValueOnce({ data: upload });
+    const file = new File(["image"], "截图.png", { type: "image/png" });
+
+    await expect(api.uploadRichTextImage(file)).resolves.toBe(upload);
+
+    expect(post.mock.calls[0]?.[0]).toBe("/rich-text/images");
+    expect(post.mock.calls[0]?.[1]).toBeInstanceOf(FormData);
+  });
 });
