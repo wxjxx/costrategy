@@ -103,6 +103,30 @@ VITE_API_BASE_URL=http://127.0.0.1:8080/api
 
 本地开发建议优先使用默认 `/api` 代理，避免浏览器跨域限制。
 
+## Docker 打包
+
+根目录的 `Dockerfile` 会在一个镜像中完成前端构建、后端 release 构建，并用 nginx 托管前端静态文件、反向代理 `/api` 到同容器内的 Rust 后端。
+
+构建镜像：
+
+```bash
+docker build -t costrategy:local .
+```
+
+运行镜像：
+
+```bash
+docker run --rm -p 8080:80 --env-file backend/.env costrategy:local
+```
+
+首次部署或有新迁移时可让容器启动前执行迁移：
+
+```bash
+docker run --rm -p 8080:80 --env-file backend/.env -e RUN_MIGRATIONS=true costrategy:local
+```
+
+容器对外暴露 `80` 端口；前端访问入口为 `http://127.0.0.1:8080`，API 仍走同源 `/api`。
+
 ## 调试
 
 后端常用调试命令：

@@ -2,6 +2,15 @@ local_ENV
 .env
 .env.*
 !.env.example
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.credentials
+credentials.json
 
 backend/target/
 frontend/node_modules/
