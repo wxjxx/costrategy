@@ -188,6 +188,35 @@ docker run --rm -p 8080:80 --env-file backend/.env -e RUN_MIGRATIONS=true costra
 
 容器对外暴露 `80` 端口；前端访问入口为 `http://127.0.0.1:8080`，API 仍走同源 `/api`。
 
+## GitHub Actions 镜像
+
+仓库包含 `.github/workflows/docker-image.yml`，会在以下场景构建 Docker 镜像：
+
+- 推送到 `main` 分支：构建并推送 `latest`、`main` 和 `sha-*` 标签。
+- 推送 `v*.*.*` tag：构建并推送对应版本 tag。
+- Pull Request：只验证镜像可构建，不推送。
+- 手动触发 `workflow_dispatch`：构建并推送镜像。
+
+镜像会发布到 GitHub Container Registry：
+
+```text
+ghcr.io/wxjxx/costrategy
+```
+
+拉取 latest 镜像：
+
+```bash
+docker pull ghcr.io/wxjxx/costrategy:latest
+```
+
+运行 GHCR 镜像：
+
+```bash
+docker run --rm -p 8080:80 --env-file backend/.env ghcr.io/wxjxx/costrategy:latest
+```
+
+每次 workflow 完成后，GitHub Actions 的 job summary 会输出本次打包好的镜像地址和 tag。
+
 ## 测试与调试
 
 后端常用命令：
