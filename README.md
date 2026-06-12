@@ -166,7 +166,7 @@ cargo build --release --locked --bins
 
 ## Docker 部署
 
-根目录的 `Dockerfile` 会在一个镜像中完成前端构建、后端 release 构建，并用 nginx 托管前端静态文件、反向代理 `/api` 到同容器内的 Rust 后端。
+根目录的 `Dockerfile` 会在一个镜像中完成前端构建、后端 release 构建，并用 nginx 托管前端静态文件、反向代理 `/api`、`/api-docs/openapi.json` 和 `/swagger-ui` 到同容器内的 Rust 后端。
 
 构建镜像：
 
@@ -187,6 +187,26 @@ docker run --rm -p 8080:80 --env-file backend/.env -e RUN_MIGRATIONS=true costra
 ```
 
 容器对外暴露 `80` 端口；前端访问入口为 `http://127.0.0.1:8080`，API 仍走同源 `/api`。
+
+如果容器外还有一层 Nginx、网关或安全代理，需要同时转发 API 文档路径，不能只转发 `/api/`：
+
+```nginx
+location ^~ /api/ {
+    proxy_pass http://costrategy_container;
+}
+
+location = /api-docs/openapi.json {
+    proxy_pass http://costrategy_container;
+}
+
+location = /swagger-ui {
+    proxy_pass http://costrategy_container;
+}
+
+location = /swagger-ui/ {
+    proxy_pass http://costrategy_container;
+}
+```
 
 ## GitHub Actions 镜像
 

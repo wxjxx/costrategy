@@ -59,6 +59,35 @@ describe("dingtalk auth", () => {
     );
   });
 
+  it("falls back to the legacy runtime auth code API when clientId is unavailable", async () => {
+    const requestAuthCode = vi.fn().mockResolvedValue({ code: "legacy-auth-code" });
+
+    await expect(
+      requestDingtalkAuthCode({
+        clientId: "",
+        corpId: "ding-corp-1",
+        dd: {
+          runtime: {
+            permission: {
+              requestAuthCode,
+            },
+          },
+        },
+      }),
+    ).resolves.toBe("legacy-auth-code");
+
+    expect(requestAuthCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        corpId: "ding-corp-1",
+      }),
+    );
+    expect(requestAuthCode).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        clientId: expect.any(String),
+      }),
+    );
+  });
+
   it("exchanges a DingTalk auth code when the current user request is unauthorized", async () => {
     const currentUser = {
       id: "user-1",
