@@ -3,14 +3,20 @@ import {
   loadCurrentUserWithDingtalkLogin,
   requestDingtalkAuthCode,
   resolveAdminToken,
+  resolveDingtalkClientId,
   resolveDingtalkCorpId,
 } from "./dingtalkAuth";
 
 describe("dingtalk auth", () => {
-  it("uses the DingTalk corpId from the launch URL before the env fallback", () => {
-    expect(
-      resolveDingtalkCorpId("?corpid=ding-from-url", "ding-from-env"),
-    ).toBe("ding-from-url");
+  it("reads the DingTalk clientId and corpid from the launch URL", () => {
+    const locationSearch = "?clientId=ding-client&corpid=ding-corp";
+
+    expect(resolveDingtalkClientId(locationSearch)).toBe("ding-client");
+    expect(resolveDingtalkCorpId(locationSearch)).toBe("ding-corp");
+  });
+
+  it("does not accept alternate corpId parameter spellings", () => {
+    expect(resolveDingtalkCorpId("?corpId=ding-corp")).toBeUndefined();
   });
 
   it("reads the admin auth token from the launch URL", () => {
@@ -26,8 +32,7 @@ describe("dingtalk auth", () => {
 
     await expect(
       requestDingtalkAuthCode({
-        clientId: "client-id-1",
-        corpId: "ding-corp-1",
+        locationSearch: "?clientId=client-id-1&corpid=ding-corp-1",
         dd: { requestAuthCode },
       }),
     ).resolves.toBe("auth-code-1");
@@ -45,8 +50,7 @@ describe("dingtalk auth", () => {
 
     await expect(
       requestDingtalkAuthCode({
-        clientId: "client-id-1",
-        corpId: "ding-corp-1",
+        locationSearch: "?clientId=client-id-1&corpid=ding-corp-1",
         loadDd: () => Promise.resolve({ requestAuthCode }),
       }),
     ).resolves.toBe("auth-code-from-package");
@@ -59,33 +63,17 @@ describe("dingtalk auth", () => {
     );
   });
 
-  it("falls back to the legacy runtime auth code API when clientId is unavailable", async () => {
-    const requestAuthCode = vi.fn().mockResolvedValue({ code: "legacy-auth-code" });
+  it("requires clientId from the launch URL", async () => {
+    const requestAuthCode = vi.fn().mockResolvedValue({ code: "auth-code-1" });
 
     await expect(
       requestDingtalkAuthCode({
-        clientId: "",
-        corpId: "ding-corp-1",
-        dd: {
-          runtime: {
-            permission: {
-              requestAuthCode,
-            },
-          },
-        },
+        locationSearch: "?corpid=ding-corp-1",
+        dd: { requestAuthCode },
       }),
-    ).resolves.toBe("legacy-auth-code");
+    ).rejects.toMatchObject({ errorCode: "DINGTALK_CLIENT_ID_MISSING" });
 
-    expect(requestAuthCode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        corpId: "ding-corp-1",
-      }),
-    );
-    expect(requestAuthCode).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        clientId: expect.any(String),
-      }),
-    );
+    expect(requestAuthCode).not.toHaveBeenCalled();
   });
 
   it("exchanges a DingTalk auth code when the current user request is unauthorized", async () => {

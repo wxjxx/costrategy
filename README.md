@@ -91,8 +91,12 @@ ADMIN_AUTH_TOKEN=<random-admin-token>
 
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8080/api
-VITE_DINGTALK_CLIENT_ID=<client-id>
-VITE_DINGTALK_CORP_ID=<corp-id>
+```
+
+钉钉工作台入口 URL 需要携带免登参数，前端只读取 URL 中的 `clientId` 和 `corpid`：
+
+```text
+https://your-domain.example/?clientId=<client-id>&corpid=<corp-id>
 ```
 
 ## 安装与初始化

@@ -2,20 +2,14 @@ import type { CurrentUser } from "@/types";
 
 type DingtalkAuthCodeResult = { code?: string; authCode?: string };
 type DingtalkAuthCodeRequest = (options: {
-  clientId?: string;
+  clientId: string;
   corpId: string;
   success?: (result: DingtalkAuthCodeResult) => void;
   fail?: (error: unknown) => void;
 }) => void | Promise<DingtalkAuthCodeResult>;
 
 export interface DingtalkJsApi {
-  requestAuthCode?: DingtalkAuthCodeRequest;
-  getAuthCode?: DingtalkAuthCodeRequest;
-  runtime?: {
-    permission?: {
-      requestAuthCode?: DingtalkAuthCodeRequest;
-    };
-  };
+  requestAuthCode: DingtalkAuthCodeRequest;
 }
 
 interface DingtalkWindow extends Window {
@@ -75,49 +69,15 @@ function getErrorLogPayload(error: unknown): Record<string, unknown> {
   return { error };
 }
 
-function resolveAuthCodeRequest(dd: DingtalkJsApi, clientId?: string) {
-  if (clientId && dd.requestAuthCode) {
-    return {
-      request: dd.requestAuthCode.bind(dd),
-      apiName: "requestAuthCode",
-      includeClientId: true,
-    };
-  }
-
-  const runtimePermission = dd.runtime?.permission;
-  if (runtimePermission?.requestAuthCode) {
-    return {
-      request: runtimePermission.requestAuthCode.bind(runtimePermission),
-      apiName: "runtime.permission.requestAuthCode",
-      includeClientId: false,
-    };
-  }
-
-  if (dd.getAuthCode) {
-    return {
-      request: dd.getAuthCode.bind(dd),
-      apiName: "getAuthCode",
-      includeClientId: false,
-    };
-  }
-
-  if (dd.requestAuthCode) {
-    return {
-      request: dd.requestAuthCode.bind(dd),
-      apiName: "requestAuthCode",
-      includeClientId: Boolean(clientId),
-    };
-  }
-
-  return undefined;
+export function resolveDingtalkClientId(locationSearch = getCurrentSearch()): string | undefined {
+  const params = new URLSearchParams(locationSearch);
+  const clientId = params.get("clientId");
+  return clientId || undefined;
 }
 
-export function resolveDingtalkCorpId(
-  locationSearch = getCurrentSearch(),
-  fallbackCorpId = import.meta.env.VITE_DINGTALK_CORP_ID,
-): string | undefined {
+export function resolveDingtalkCorpId(locationSearch = getCurrentSearch()): string | undefined {
   const params = new URLSearchParams(locationSearch);
-  const corpId = params.get("corpid") ?? params.get("corpId") ?? fallbackCorpId;
+  const corpId = params.get("corpid");
   return corpId || undefined;
 }
 
@@ -136,8 +96,6 @@ export function isUnauthorizedError(error: unknown): boolean {
 }
 
 export async function requestDingtalkAuthCode(options: {
-  clientId?: string;
-  corpId?: string;
   dd?: DingtalkJsApi;
   loadDd?: () => Promise<DingtalkJsApi | undefined>;
   locationSearch?: string;
@@ -147,40 +105,26 @@ export async function requestDingtalkAuthCode(options: {
     console.info("[auth:dingtalk] DingTalk JSAPI not found on window, loading npm package");
     dd = await (options.loadDd ?? loadDingtalkJsApiFromPackage)();
   }
-  const clientId = options.clientId ?? import.meta.env.VITE_DINGTALK_CLIENT_ID;
-  const corpId = options.corpId ?? resolveDingtalkCorpId(options.locationSearch);
-  const corpIdSource =
-    options.corpId !== undefined
-      ? "argument"
-      : new URLSearchParams(options.locationSearch ?? getCurrentSearch()).has("corpid") ||
-          new URLSearchParams(options.locationSearch ?? getCurrentSearch()).has("corpId")
-        ? "url"
-        : import.meta.env.VITE_DINGTALK_CORP_ID
-          ? "env"
-          : "missing";
+  const locationSearch = options.locationSearch ?? getCurrentSearch();
+  const clientId = resolveDingtalkClientId(locationSearch);
+  const corpId = resolveDingtalkCorpId(locationSearch);
 
-  if (!dd) {
+  if (!dd?.requestAuthCode) {
     console.warn("[auth:dingtalk] DingTalk JSAPI is missing");
     throw new DingtalkAuthError("DINGTALK_JSAPI_MISSING", "当前环境不支持钉钉免登");
   }
-  if (!corpId) {
-    console.warn("[auth:dingtalk] DingTalk corpId is missing");
-    throw new DingtalkAuthError("DINGTALK_CORP_ID_MISSING", "缺少钉钉企业 CorpId");
-  }
-  const authCodeRequest = resolveAuthCodeRequest(dd, clientId);
-  if (!authCodeRequest) {
-    console.warn("[auth:dingtalk] DingTalk auth code API is missing");
-    throw new DingtalkAuthError("DINGTALK_JSAPI_MISSING", "当前环境不支持钉钉免登");
-  }
-  if (!clientId && authCodeRequest.includeClientId) {
-    console.warn("[auth:dingtalk] DingTalk clientId is missing");
+  if (!clientId) {
+    console.warn("[auth:dingtalk] DingTalk clientId is missing from URL");
     throw new DingtalkAuthError("DINGTALK_CLIENT_ID_MISSING", "缺少钉钉应用 Client ID");
+  }
+  if (!corpId) {
+    console.warn("[auth:dingtalk] DingTalk corpId is missing from URL");
+    throw new DingtalkAuthError("DINGTALK_CORP_ID_MISSING", "缺少钉钉企业 CorpId");
   }
 
   console.info("[auth:dingtalk] requesting DingTalk auth code", {
-    corpIdSource,
-    hasClientId: Boolean(clientId),
-    apiName: authCodeRequest.apiName,
+    hasClientId: true,
+    apiName: "requestAuthCode",
   });
 
   return new Promise((resolve, reject) => {
@@ -221,8 +165,8 @@ export async function requestDingtalkAuthCode(options: {
       );
     };
 
-    const result = authCodeRequest.request({
-      ...(authCodeRequest.includeClientId ? { clientId } : {}),
+    const result = dd.requestAuthCode({
+      clientId,
       corpId,
       success: onSuccess,
       fail: onFail,
