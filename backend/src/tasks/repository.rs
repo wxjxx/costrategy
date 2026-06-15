@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub enum TaskStatus {
     Todo,
     InProgress,
+    Blocked,
     Done,
 }
 
@@ -1311,6 +1312,7 @@ impl TaskStatus {
         match self {
             Self::Todo => "todo",
             Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
             Self::Done => "done",
         }
     }
@@ -1387,6 +1389,7 @@ impl FromStr for TaskStatus {
         match value {
             "todo" => Ok(Self::Todo),
             "in_progress" => Ok(Self::InProgress),
+            "blocked" => Ok(Self::Blocked),
             "done" => Ok(Self::Done),
             other => Err(TaskStatusParseError(other.to_string())),
         }
@@ -1472,9 +1475,15 @@ fn ensure_status_transition(from: TaskStatus, to: TaskStatus) -> Result<(), Task
     let allowed = matches!(
         (from, to),
         (TaskStatus::Todo, TaskStatus::InProgress)
+            | (TaskStatus::Todo, TaskStatus::Blocked)
             | (TaskStatus::Todo, TaskStatus::Done)
             | (TaskStatus::InProgress, TaskStatus::Todo)
+            | (TaskStatus::InProgress, TaskStatus::Blocked)
             | (TaskStatus::InProgress, TaskStatus::Done)
+            | (TaskStatus::Blocked, TaskStatus::Todo)
+            | (TaskStatus::Blocked, TaskStatus::InProgress)
+            | (TaskStatus::Blocked, TaskStatus::Done)
+            | (TaskStatus::Done, TaskStatus::Blocked)
             | (TaskStatus::Done, TaskStatus::InProgress)
     );
     if allowed {
@@ -1542,7 +1551,7 @@ fn task_order_by(sort: TaskSort) -> &'static str {
             "case t.priority when 'high' then 1 when 'medium' then 2 else 3 end asc, t.due_date asc, t.title asc"
         }
         TaskSort::Status => {
-            "case t.status when 'todo' then 1 when 'in_progress' then 2 else 3 end asc, t.due_date asc, t.title asc"
+            "case t.status when 'todo' then 1 when 'in_progress' then 2 when 'blocked' then 3 else 4 end asc, t.due_date asc, t.title asc"
         }
     }
 }
@@ -1559,7 +1568,8 @@ fn status_rank(status: TaskStatus) -> u8 {
     match status {
         TaskStatus::Todo => 1,
         TaskStatus::InProgress => 2,
-        TaskStatus::Done => 3,
+        TaskStatus::Blocked => 3,
+        TaskStatus::Done => 4,
     }
 }
 
@@ -1794,14 +1804,10 @@ async fn insert_activity_log(
     Ok(())
 }
 
-fn compute_overdue(status: TaskStatus, due_date: NaiveDate) -> bool {
-    status != TaskStatus::Done && Utc::now().date_naive() > due_date
+fn compute_overdue(_status: TaskStatus, due_date: NaiveDate) -> bool {
+    Utc::now().date_naive() > due_date
 }
 
-fn display_status(status: TaskStatus, is_overdue: bool) -> &'static str {
-    if is_overdue {
-        "overdue"
-    } else {
-        status.as_str()
-    }
+fn display_status(status: TaskStatus, _is_overdue: bool) -> &'static str {
+    status.as_str()
 }

@@ -151,7 +151,7 @@ const saveMutation = useMutation({
     const payload = {
       ...form.value,
       assignee_id: form.value.assignee_ids[0] ?? "",
-      status: form.value.status as "todo" | "in_progress" | "done",
+      status: form.value.status as "todo" | "in_progress" | "blocked" | "done",
       priority: form.value.priority as "low" | "medium" | "high",
       description_json: editor.value?.getJSON() ?? {},
     };
@@ -329,6 +329,7 @@ function removePendingFile(index: number) {
               <ElSelect v-model="form.status">
                 <ElOption label="待开始" value="todo" />
                 <ElOption label="进行中" value="in_progress" />
+                <ElOption label="阻塞" value="blocked" />
                 <ElOption label="已完成" value="done" />
               </ElSelect>
             </ElFormItem>

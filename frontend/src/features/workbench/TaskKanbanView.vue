@@ -101,7 +101,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
       <VueDraggableNext
         class="kanban-list"
         :list="groups[column.key]"
-        :group="{ name: 'tasks', pull: column.key !== 'overdue', put: column.key !== 'overdue' }"
+        :group="{ name: 'tasks' }"
         item-key="id"
         @change="onDrop(column.key, $event)"
       >
@@ -113,7 +113,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
         >
           <div class="task-card-title">
             <strong>{{ task.title }}</strong>
-            <span v-if="task.is_overdue && task.status !== 'done'" class="overdue-mark">已延期</span>
+            <span v-if="task.is_overdue" class="overdue-mark">已延期</span>
           </div>
           <p>所属项目：{{ task.project_name || "-" }}</p>
           <p class="assignee-line">

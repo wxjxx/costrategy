@@ -130,6 +130,16 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert_eq!(in_progress.project_name.as_deref(), Some("任务测试项目"));
     assert_eq!(in_progress.assignee_name.as_deref(), Some("测试员工"));
     assert_eq!(in_progress.project_owner_id, Some(manager.id));
+    let blocked = tasks
+        .update_task_status(created.id, assignee.id, TaskStatus::Blocked)
+        .await
+        .unwrap();
+    assert_eq!(blocked.status, TaskStatus::Blocked);
+    let back_to_progress = tasks
+        .update_task_status(created.id, assignee.id, TaskStatus::InProgress)
+        .await
+        .unwrap();
+    assert_eq!(back_to_progress.status, TaskStatus::InProgress);
     let due_tasks = tasks
         .list_tasks_due_on(NaiveDate::from_ymd_opt(2026, 6, 10).unwrap())
         .await
@@ -223,7 +233,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(log_count, 6);
+    assert_eq!(log_count, 8);
 
     cleanup(&pool, &manager_ding, &assignee_ding, &project_code).await;
 }

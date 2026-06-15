@@ -14,6 +14,7 @@
   --card-gap: 8px;
   --task-status-todo: #8b95a5;
   --task-status-in-progress: #2b7bff;
+  --task-status-blocked: #f97316;
   --task-status-done: #35b86b;
   --task-status-overdue: #ff4d4f;
 }
@@ -432,6 +433,7 @@ button {
 
 .is-gray { background: var(--task-status-todo); }
 .is-blue { background: var(--task-status-in-progress); }
+.is-orange { background: var(--task-status-blocked); }
 .is-green { background: var(--task-status-done); }
 .is-red { background: var(--task-status-overdue); }
 
@@ -489,6 +491,33 @@ button {
   line-height: 24px;
 }
 
+.overdue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #ffffff;
+  background: var(--task-status-overdue);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.task-title-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gantt-overdue-badge {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 .priority-tag,
 .status-tag {
   display: inline-flex;
@@ -544,6 +573,12 @@ button {
   border: 1px solid #b9d4ff;
 }
 
+.status-blocked {
+  color: #c2410c;
+  background: #fff4e8;
+  border: 1px solid #fed7aa;
+}
+
 .status-done {
   color: #16853d;
   background: #ecfbf1;
@@ -552,6 +587,7 @@ button {
 
 .status-todo i { background: var(--task-status-todo); }
 .status-in_progress i { background: var(--task-status-in-progress); }
+.status-blocked i { background: var(--task-status-blocked); }
 .status-done i { background: var(--task-status-done); }
 .status-overdue i { background: var(--task-status-overdue); }
 
@@ -634,6 +670,7 @@ button {
 
 .legend-todo { background: var(--task-status-todo); }
 .legend-in-progress { background: var(--task-status-in-progress); }
+.legend-blocked { background: var(--task-status-blocked); }
 .legend-done { background: var(--task-status-done); }
 .legend-overdue { background: var(--task-status-overdue); }
 

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { CurrentUser, Task } from "@/types";
 import {
   canMoveTaskToStatus,
+  displayColumns,
   filterTasks,
+  getDisplayStatus,
   groupTasksByDisplayStatus,
   moveTaskForDisplay,
   statusColor,
@@ -36,20 +38,30 @@ const employee: CurrentUser = {
 };
 
 describe("taskWorkflow", () => {
-  it("groups unfinished overdue tasks into the overdue display column", () => {
+  it("groups tasks only by real task statuses and keeps overdue as a flag", () => {
     const grouped = groupTasksByDisplayStatus([
       baseTask,
       { ...baseTask, id: "task-2", status: "todo", is_overdue: true },
       { ...baseTask, id: "task-3", status: "done", is_overdue: true },
     ]);
 
+    expect(displayColumns.map((column) => column.key)).toEqual([
+      "todo",
+      "in_progress",
+      "done",
+      "blocked",
+    ]);
+    expect(getDisplayStatus({ ...baseTask, status: "blocked" })).toBe("blocked");
+    expect(getDisplayStatus({ ...baseTask, status: "done", is_overdue: true })).toBe("done");
+    expect(grouped.todo.map((task) => task.id)).toEqual(["task-2"]);
     expect(grouped.in_progress.map((task) => task.id)).toEqual(["task-1"]);
-    expect(grouped.overdue.map((task) => task.id)).toEqual(["task-2"]);
     expect(grouped.done.map((task) => task.id)).toEqual(["task-3"]);
+    expect(grouped.blocked).toEqual([]);
   });
 
   it("allows employees to move only their own task to real statuses", () => {
     expect(canMoveTaskToStatus(baseTask, "done", employee)).toBe(true);
+    expect(canMoveTaskToStatus(baseTask, "blocked", employee)).toBe(true);
     expect(
       canMoveTaskToStatus(
         { ...baseTask, assignee_id: "user-9" },
@@ -57,7 +69,6 @@ describe("taskWorkflow", () => {
         employee,
       ),
     ).toBe(false);
-    expect(canMoveTaskToStatus(baseTask, "overdue", employee)).toBe(false);
     expect(
       canMoveTaskToStatus(baseTask, "done", { ...employee, role: "manager" }),
     ).toBe(true);
@@ -87,7 +98,7 @@ describe("taskWorkflow", () => {
     expect(moved[0]).toMatchObject({
       id: "task-1",
       status: "in_progress",
-      is_overdue: false,
+      is_overdue: true,
     });
     expect(groupTasksByDisplayStatus(moved).in_progress.map((task) => task.id)).toEqual([
       "task-1",
@@ -97,6 +108,7 @@ describe("taskWorkflow", () => {
   it("uses one color palette for task status displays", () => {
     expect(statusColor("todo")).toBe("#8b95a5");
     expect(statusColor("in_progress")).toBe("#2b7bff");
+    expect(statusColor("blocked")).toBe("#f97316");
     expect(statusColor("done")).toBe("#35b86b");
     expect(statusColor("overdue")).toBe("#ff4d4f");
     expect(

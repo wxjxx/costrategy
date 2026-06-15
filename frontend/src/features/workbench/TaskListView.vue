@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRouter } from "vue-router";
 import { api } from "@/api/client";
+import OverdueBadge from "@/components/OverdueBadge.vue";
 import PriorityTag from "@/components/PriorityTag.vue";
 import StatusTag from "@/components/StatusTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
@@ -58,7 +59,14 @@ watch(pageSize, () => {
 <template>
   <ElTable :data="pagedTasks" class="task-table" @row-click="(row: Task) => router.push(`/tasks/${row.id}`)">
     <ElTableColumn type="index" width="54" :index="(index: number) => (currentPage - 1) * pageSize + index + 1" />
-    <ElTableColumn prop="title" label="任务标题" min-width="170" />
+    <ElTableColumn label="任务标题" min-width="170">
+      <template #default="{ row }">
+        <span class="task-title-cell">
+          <OverdueBadge v-if="row.is_overdue" />
+          {{ row.title }}
+        </span>
+      </template>
+    </ElTableColumn>
     <ElTableColumn prop="project_name" label="所属项目" min-width="180" />
     <ElTableColumn label="负责人" width="130">
       <template #default="{ row }">

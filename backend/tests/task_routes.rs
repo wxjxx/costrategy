@@ -119,6 +119,63 @@ async fn manager_can_create_edit_list_and_archive_task() {
 }
 
 #[actix_web::test]
+async fn manager_can_create_filter_and_update_blocked_task() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+
+    let create_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/tasks")
+            .cookie(manager_cookie.clone())
+            .set_json(json!({
+                "title": "外部依赖阻塞",
+                "project_id": fixture.project_id,
+                "assignee_id": fixture.employee_id,
+                "status": "blocked",
+                "priority": "high",
+                "start_date": "2026-06-01",
+                "due_date": "2026-06-10",
+                "description_json": {"type": "doc", "content": []}
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let created: serde_json::Value = test::read_body_json(create_response).await;
+    assert_eq!(created["status"], "blocked");
+    assert_eq!(created["display_status"], "blocked");
+    let task_id = created["id"].as_str().unwrap();
+
+    let filter_response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/tasks?status=blocked")
+            .cookie(manager_cookie.clone())
+            .to_request(),
+    )
+    .await;
+    assert_eq!(filter_response.status(), StatusCode::OK);
+    let tasks: serde_json::Value = test::read_body_json(filter_response).await;
+    assert_eq!(tasks.as_array().unwrap().len(), 1);
+    assert_eq!(tasks[0]["title"], "外部依赖阻塞");
+
+    let update_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri(&format!("/api/tasks/{task_id}/status"))
+            .cookie(manager_cookie)
+            .set_json(json!({ "status": "in_progress" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let updated: serde_json::Value = test::read_body_json(update_response).await;
+    assert_eq!(updated["status"], "in_progress");
+}
+
+#[actix_web::test]
 async fn task_creator_or_manager_can_delete_task() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
@@ -442,7 +499,7 @@ async fn task_status_transition_rejects_done_to_todo() {
 }
 
 #[actix_web::test]
-async fn task_list_marks_unfinished_past_due_task_as_overdue() {
+async fn task_list_marks_past_due_tasks_as_overdue_without_changing_status() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
     let manager_cookie = login_cookie(&app, "manager-code").await;
@@ -461,6 +518,21 @@ async fn task_list_marks_unfinished_past_due_task_as_overdue() {
         }),
     )
     .await;
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "逾期后完成的任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "done",
+            "priority": "medium",
+            "start_date": "2026-05-01",
+            "due_date": "2026-06-01",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
 
     let response = test::call_service(
         &app,
@@ -473,8 +545,22 @@ async fn task_list_marks_unfinished_past_due_task_as_overdue() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let tasks: serde_json::Value = test::read_body_json(response).await;
-    assert_eq!(tasks[0]["is_overdue"], true);
-    assert_eq!(tasks[0]["display_status"], "overdue");
+    let overdue_task = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["title"] == "延期任务")
+        .unwrap();
+    let done_overdue_task = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["title"] == "逾期后完成的任务")
+        .unwrap();
+    assert_eq!(overdue_task["is_overdue"], true);
+    assert_eq!(overdue_task["display_status"], "todo");
+    assert_eq!(done_overdue_task["is_overdue"], true);
+    assert_eq!(done_overdue_task["display_status"], "done");
 }
 
 #[actix_web::test]

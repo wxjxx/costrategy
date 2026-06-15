@@ -81,6 +81,7 @@ function resetFilters() {
         <ElSelect v-model="local.status" clearable placeholder="请选择状态">
           <ElOption label="待开始" value="todo" />
           <ElOption label="进行中" value="in_progress" />
+          <ElOption label="阻塞" value="blocked" />
           <ElOption label="已完成" value="done" />
         </ElSelect>
       </ElFormItem>

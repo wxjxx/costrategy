@@ -14,29 +14,29 @@ export const displayColumns: Array<{
   { key: "todo", title: "待开始", dotClass: "is-gray" },
   { key: "in_progress", title: "进行中", dotClass: "is-blue" },
   { key: "done", title: "已完成", dotClass: "is-green" },
-  { key: "overdue", title: "已延期", dotClass: "is-red" },
+  { key: "blocked", title: "阻塞", dotClass: "is-orange" },
 ];
 
-const taskStatusColors: Record<DisplayStatus, string> = {
+type StatusColorKey = TaskStatus | "overdue";
+
+const taskStatusColors: Record<StatusColorKey, string> = {
   todo: "#8b95a5",
   in_progress: "#2b7bff",
+  blocked: "#f97316",
   done: "#35b86b",
   overdue: "#ff4d4f",
 };
 
 export function getDisplayStatus(task: Task): DisplayStatus {
-  if (task.status !== "done" && task.is_overdue) {
-    return "overdue";
-  }
   return task.status;
 }
 
-export function statusColor(status: DisplayStatus | TaskStatus): string {
+export function statusColor(status: StatusColorKey): string {
   return taskStatusColors[status];
 }
 
 export function taskDisplayStatusColor(task: Task): string {
-  return statusColor(getDisplayStatus(task));
+  return statusColor(task.is_overdue ? "overdue" : task.status);
 }
 
 export function groupTasksByDisplayStatus(
@@ -47,7 +47,7 @@ export function groupTasksByDisplayStatus(
       groups[getDisplayStatus(task)].push(task);
       return groups;
     },
-    { todo: [], in_progress: [], done: [], overdue: [] },
+    { todo: [], in_progress: [], blocked: [], done: [] },
   );
 }
 
@@ -57,7 +57,7 @@ export function moveTaskForDisplay(
   status: TaskStatus,
 ): Task[] {
   return tasks.map((task) =>
-    task.id === taskId ? { ...task, status, is_overdue: false } : task,
+    task.id === taskId ? { ...task, status } : task,
   );
 }
 
@@ -67,12 +67,9 @@ export function canManageTasks(user: CurrentUser): boolean {
 
 export function canMoveTaskToStatus(
   task: Task,
-  targetStatus: DisplayStatus,
+  _targetStatus: DisplayStatus,
   user: CurrentUser,
-): targetStatus is TaskStatus {
-  if (targetStatus === "overdue") {
-    return false;
-  }
+): _targetStatus is TaskStatus {
   return canManageTasks(user) || taskAssigneeIds(task).includes(user.id);
 }
 
@@ -107,12 +104,12 @@ export function primaryTaskAssigneeName(task: Task): string | undefined {
   return task.assignees?.[0]?.name ?? task.assignee_name;
 }
 
-export function statusLabel(status: DisplayStatus | TaskStatus): string {
+export function statusLabel(status: DisplayStatus): string {
   const labels: Record<DisplayStatus, string> = {
     todo: "待开始",
     in_progress: "进行中",
+    blocked: "阻塞",
     done: "已完成",
-    overdue: "已延期",
   };
   return labels[status];
 }

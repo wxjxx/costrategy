@@ -146,7 +146,7 @@ fn paths() -> Value {
                     query_param("keyword", "string", "任务标题关键词"),
                     query_param("project_id", "string", "项目 ID"),
                     query_param("assignee_id", "string", "负责人 ID"),
-                    query_param("status", "string", "任务状态：todo、in_progress、done"),
+                    query_param("status", "string", "任务状态：todo、in_progress、blocked、done"),
                     query_param("priority", "string", "优先级：low、medium、high"),
                     query_param("date_from", "string", "开始日期，YYYY-MM-DD"),
                     query_param("date_to", "string", "截止日期，YYYY-MM-DD"),
@@ -385,14 +385,14 @@ fn components() -> Value {
                     "assignee_ids",
                     json!({ "type": "array", "items": uuid_schema() }),
                 ),
-                required_prop("status", enum_schema(vec!["todo", "in_progress", "done"])),
+                required_prop("status", enum_schema(vec!["todo", "in_progress", "blocked", "done"])),
                 required_prop("priority", enum_schema(vec!["low", "medium", "high"])),
                 required_prop("start_date", date_schema()),
                 required_prop("due_date", date_schema()),
                 required_prop("description_json", json!({ "type": "object", "additionalProperties": true }))
             ]),
             "UpdateTaskStatusRequest": object_schema(vec![
-                required_prop("status", enum_schema(vec!["todo", "in_progress", "done"]))
+                required_prop("status", enum_schema(vec!["todo", "in_progress", "blocked", "done"]))
             ]),
             "TaskDetail": object_schema(vec![
                 required_prop("task", schema_ref("Task")),
@@ -675,7 +675,10 @@ fn task_schema() -> Value {
                 ])
             }),
         ),
-        required_prop("status", enum_schema(vec!["todo", "in_progress", "done"])),
+        required_prop(
+            "status",
+            enum_schema(vec!["todo", "in_progress", "blocked", "done"]),
+        ),
         required_prop("priority", enum_schema(vec!["low", "medium", "high"])),
         required_prop("start_date", date_schema()),
         required_prop("due_date", date_schema()),

@@ -1,24 +1,22 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { gantt } from "dhtmlx-gantt";
 import "dhtmlx-gantt/codebase/dhtmlxgantt.css";
 import type { Task } from "@/types";
-import { taskDisplayStatusColor } from "@/features/tasks/taskWorkflow";
+import {
+  buildGanttTasks,
+  formatGanttTooltip,
+  taskDetailPathFromGanttTask,
+  type GanttTask,
+} from "./taskGantt";
 
 const props = defineProps<{ tasks: Task[] }>();
 
+const router = useRouter();
 const container = ref<HTMLElement>();
 type GanttScaleMode = "按天" | "按周";
-type GanttTask = {
-  id: string;
-  text: string;
-  start_date?: string;
-  end_date?: string;
-  parent?: string;
-  open?: boolean;
-  type?: string | number;
-  color?: string;
-};
+const taskClickEventId = ref<string>();
 
 const scaleOptions: GanttScaleMode[] = ["按天", "按周"];
 const scaleMode = ref<GanttScaleMode>("按周");
@@ -46,42 +44,11 @@ function applyScaleMode() {
   gantt.config.min_column_width = 150;
 }
 
-function buildGanttTasks(tasks: Task[]): GanttTask[] {
-  const projectTasks = new Map<string, GanttTask>();
-  const ganttTasks: GanttTask[] = [];
-
-  tasks.forEach((task) => {
-    const projectId = `project-${task.project_id}`;
-    if (!projectTasks.has(projectId)) {
-      const projectTask = {
-        id: projectId,
-        text: task.project_name || "未命名项目",
-        type: gantt.config.types.project,
-        open: true,
-      };
-
-      projectTasks.set(projectId, projectTask);
-      ganttTasks.push(projectTask);
-    }
-
-    ganttTasks.push({
-      id: task.id,
-      parent: projectId,
-      text: `${task.title}  ${task.assignee_name ?? ""}`,
-      start_date: task.start_date,
-      end_date: task.due_date,
-      color: taskDisplayStatusColor(task),
-    });
-  });
-
-  return ganttTasks;
-}
-
 function render() {
   if (!container.value) return;
   gantt.clearAll();
   gantt.parse({
-    data: buildGanttTasks(props.tasks),
+    data: buildGanttTasks(props.tasks, gantt.config.types.project ?? "project"),
   });
 }
 
@@ -94,7 +61,13 @@ onMounted(() => {
   gantt.config.subscales = [{ unit: "day", step: 1, date: "%m.%d" }];
   applyScaleMode();
   gantt.config.columns = [{ name: "text", label: "任务名称", tree: true, width: 260 }];
-  gantt.templates.tooltip_text = (_start, _end, task) => `<b>${task.text}</b>`;
+  gantt.templates.tooltip_text = (_start, _end, task) =>
+    formatGanttTooltip(task as GanttTask);
+  taskClickEventId.value = gantt.attachEvent("onTaskClick", (id) => {
+    const path = taskDetailPathFromGanttTask(gantt.getTask(id) as GanttTask);
+    if (path) void router.push(path);
+    return false;
+  });
   gantt.init(container.value);
   render();
 });
@@ -108,6 +81,9 @@ watch(scaleMode, () => {
 });
 
 onBeforeUnmount(() => {
+  if (taskClickEventId.value) {
+    gantt.detachEvent(taskClickEventId.value);
+  }
   gantt.clearAll();
 });
 </script>
@@ -120,6 +96,7 @@ onBeforeUnmount(() => {
         <span><i class="legend-todo" />待开始</span>
         <span><i class="legend-in-progress" />进行中</span>
         <span><i class="legend-done" />已完成</span>
+        <span><i class="legend-blocked" />阻塞</span>
         <span><i class="legend-overdue" />已延期</span>
       </div>
       <ElSegmented v-model="scaleMode" :options="scaleOptions" />

@@ -1,8 +1,8 @@
 export type UserRole = "employee" | "manager" | "admin";
 export type UserStatus = "active" | "disabled";
-export type TaskStatus = "todo" | "in_progress" | "done";
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 export type TaskPriority = "low" | "medium" | "high";
-export type DisplayStatus = TaskStatus | "overdue";
+export type DisplayStatus = TaskStatus;
 export type ProjectStatus = "active" | "archived" | "completed" | "paused";
 
 export interface CurrentUser {

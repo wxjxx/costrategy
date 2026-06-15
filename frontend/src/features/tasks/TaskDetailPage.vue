@@ -156,6 +156,7 @@ async function deleteCurrentTask() {
       <div>
         <h2>{{ task.title }}</h2>
         <StatusTag :status="getDisplayStatus(task)" />
+        <span v-if="task.is_overdue" class="overdue-mark">已延期</span>
         <PriorityTag :priority="task.priority" />
       </div>
       <div class="task-title-actions">
@@ -181,7 +182,7 @@ async function deleteCurrentTask() {
         <span>优先级：<PriorityTag :priority="task.priority" /></span>
         <span>开始日期：{{ task.start_date }}</span>
         <span>截止日期：{{ task.due_date }}</span>
-        <span>是否延期：{{ task.is_overdue && task.status !== "done" ? "是" : "否" }}</span>
+        <span>是否延期：{{ task.is_overdue ? "是" : "否" }}</span>
         <span>创建人：{{ task.creator_name || task.creator_id }}</span>
       </div>
     </section>
