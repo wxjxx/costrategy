@@ -118,6 +118,7 @@ where
                 notification_type,
                 receiver_id: receiver.id,
                 task_id: Some(task.id),
+                jump_url: Some(build_task_jump_url(task)),
                 content_summary,
                 status,
                 failure_reason,
@@ -269,6 +270,7 @@ where
                 notification_type,
                 receiver_id: receiver.id,
                 task_id: Some(task.id),
+                jump_url: Some(build_task_jump_url(&task)),
                 content_summary: message,
                 status,
                 failure_reason,
@@ -300,7 +302,11 @@ fn build_task_message(action: &str, task: &Task) -> String {
         .clone()
         .unwrap_or_else(|| task.project_id.to_string());
     format!(
-        "{action}\n任务：{}\n项目：{}\n截止日期：{}\n进入任务详情：/workbench?task_id={}",
-        task.title, project_label, task.due_date, task.id
+        "{action}\n任务：{}\n项目：{}\n截止日期：{}",
+        task.title, project_label, task.due_date
     )
+}
+
+fn build_task_jump_url(task: &Task) -> String {
+    format!("/tasks/{}", task.id)
 }

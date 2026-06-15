@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -14,6 +14,7 @@ import { api } from "@/api/client";
 import { canAccessAdminModules } from "@/auth/accessControl";
 import UserAvatar from "@/components/UserAvatar.vue";
 import logoUrl from "@/assets/logo.png";
+import type { NotificationRecord } from "@/types";
 
 const route = useRoute();
 const router = useRouter();
@@ -21,18 +22,27 @@ const { data: currentUser } = useQuery({
   queryKey: ["me"],
   queryFn: () => api.me(),
 });
-const canViewNotificationRecords = computed(() =>
-  canAccessAdminModules(currentUser.value) &&
-  (currentUser.value?.permissions.includes("view_notification_records") ?? false),
-);
-const { data: notificationRecords } = useQuery({
-  queryKey: ["notification-records", "header"],
-  queryFn: api.notificationRecords,
-  enabled: canViewNotificationRecords,
+const { data: myNotifications, refetch: refetchMyNotifications } = useQuery({
+  queryKey: ["my-notifications", "header"],
+  queryFn: api.myNotifications,
 });
 
+const sidebarCollapsed = ref(false);
+const notificationPanelOpen = ref(false);
+const activeNotificationTab = ref<"unread" | "read">("unread");
 const pageTitle = computed(() => String(route.meta.title ?? "工作台"));
-const notificationCount = computed(() => notificationRecords.value?.length ?? 0);
+const unreadNotifications = computed(() =>
+  (myNotifications.value ?? []).filter((record) => !record.read_at),
+);
+const readNotifications = computed(() =>
+  (myNotifications.value ?? []).filter((record) => Boolean(record.read_at)),
+);
+const visibleNotifications = computed(() =>
+  activeNotificationTab.value === "unread"
+    ? unreadNotifications.value
+    : readNotifications.value,
+);
+const notificationCount = computed(() => unreadNotifications.value.length);
 const notificationBadgeText = computed(() =>
   notificationCount.value > 99 ? "99+" : String(notificationCount.value),
 );
@@ -46,13 +56,48 @@ const navItems = computed(() =>
   ].filter((item) => !item.adminOnly || canAccessAdminModules(currentUser.value)),
 );
 
-function openNotificationRecords() {
-  void router.push({ path: "/settings", query: { tab: "records" } });
+function toggleNotificationPanel() {
+  notificationPanelOpen.value = !notificationPanelOpen.value;
+}
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+}
+
+function notificationTitle(record: NotificationRecord): string {
+  return record.content_summary.split("\n")[0] || "通知消息";
+}
+
+function notificationDetail(record: NotificationRecord): string {
+  return record.content_summary
+    .split("\n")
+    .slice(1)
+    .join(" ")
+    .replace(/^任务：/u, "")
+    .trim();
+}
+
+function notificationTime(record: NotificationRecord): string {
+  const matched = record.sent_at.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/u);
+  return matched ? `${matched[1]} ${matched[2]}` : record.sent_at;
+}
+
+function notificationTarget(record: NotificationRecord): string {
+  return record.jump_url ?? (record.task_id ? `/tasks/${record.task_id}` : "/workbench");
+}
+
+async function openNotification(record: NotificationRecord) {
+  if (!record.read_at) {
+    await api.markMyNotificationRead(record.id);
+    await refetchMyNotifications();
+  }
+  notificationPanelOpen.value = false;
+  void router.push(notificationTarget(record));
 }
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <aside class="app-sidebar">
       <RouterLink to="/workbench" class="brand">
         <img class="brand-mark" :src="logoUrl" alt="项目管理系统" />
@@ -69,9 +114,14 @@ function openNotificationRecords() {
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
-      <button class="collapse-button" type="button">
+      <button
+        class="collapse-button"
+        type="button"
+        :aria-label="sidebarCollapsed ? '展开菜单' : '收起菜单'"
+        @click="toggleSidebar"
+      >
         <ElIcon><Fold /></ElIcon>
-        <span>收起菜单</span>
+        <span>{{ sidebarCollapsed ? "展开菜单" : "收起菜单" }}</span>
       </button>
     </aside>
     <section class="app-main">
@@ -81,17 +131,55 @@ function openNotificationRecords() {
         </div>
         <div class="header-actions">
           <button
-            class="icon-button with-badge"
+            class="icon-button with-badge notification-trigger"
             type="button"
             :aria-label="`通知${notificationCount ? `（${notificationCount}）` : ''}`"
-            @click="openNotificationRecords"
+            @click="toggleNotificationPanel"
           >
             <ElIcon><Bell /></ElIcon>
-            <span v-if="notificationCount > 0">{{ notificationBadgeText }}</span>
+            <span v-if="notificationCount > 0" class="notification-badge">
+              {{ notificationBadgeText }}
+            </span>
           </button>
+          <section v-if="notificationPanelOpen" class="notification-panel">
+            <div class="notification-tabs">
+              <button
+                class="unread-tab"
+                :class="{ active: activeNotificationTab === 'unread' }"
+                type="button"
+                @click="activeNotificationTab = 'unread'"
+              >
+                未读 {{ unreadNotifications.length }}
+              </button>
+              <button
+                class="read-tab"
+                :class="{ active: activeNotificationTab === 'read' }"
+                type="button"
+                @click="activeNotificationTab = 'read'"
+              >
+                已读 {{ readNotifications.length }}
+              </button>
+            </div>
+            <div v-if="visibleNotifications.length === 0" class="notification-empty">
+              暂无通知
+            </div>
+            <button
+              v-for="record in visibleNotifications"
+              :key="record.id"
+              class="notification-item"
+              type="button"
+              :data-notification-id="record.id"
+              @click="openNotification(record)"
+            >
+              <span class="notification-item-title">{{ notificationTitle(record) }}</span>
+              <span v-if="notificationDetail(record)" class="notification-item-detail">
+                {{ notificationDetail(record) }}
+              </span>
+              <span class="notification-item-time">{{ notificationTime(record) }}</span>
+            </button>
+          </section>
           <UserAvatar :name="currentUser?.name" :size="38" />
           <strong>{{ currentUser?.name ?? "未登录" }}</strong>
-          <span class="chevron">⌄</span>
         </div>
       </header>
       <main class="page-content">

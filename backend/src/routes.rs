@@ -179,6 +179,14 @@ where
             web::get().to(list_notification_records::<C, R, N>),
         )
         .route(
+            "/api/my-notifications",
+            web::get().to(list_my_notifications::<C, R, N>),
+        )
+        .route(
+            "/api/my-notifications/{notification_id}/read",
+            web::patch().to(mark_my_notification_read::<C, R, N>),
+        )
+        .route(
             "/api/notification-rules",
             web::get().to(list_notification_rules::<C, R, N>),
         )
@@ -1074,6 +1082,50 @@ where
             .await
             .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?,
     ))
+}
+
+async fn list_my_notifications<C, R, N>(
+    state: web::Data<AppState<C, R>>,
+    notifications: web::Data<N>,
+    request: HttpRequest,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    N: NotificationRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    Ok(HttpResponse::Ok().json(
+        notifications
+            .list_records_for_receiver(current_user.id)
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?,
+    ))
+}
+
+async fn mark_my_notification_read<C, R, N>(
+    state: web::Data<AppState<C, R>>,
+    notifications: web::Data<N>,
+    request: HttpRequest,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    N: NotificationRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    let Some(record) = notifications
+        .mark_record_read(path.into_inner(), current_user.id)
+        .await
+        .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?
+    else {
+        return Err(AppError::new(
+            actix_web::http::StatusCode::NOT_FOUND,
+            ApiErrorCode::ValidationFailed,
+        ));
+    };
+    Ok(HttpResponse::Ok().json(record))
 }
 
 #[derive(Debug, serde::Deserialize)]

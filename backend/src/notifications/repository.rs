@@ -26,10 +26,12 @@ pub struct NotificationRecord {
     pub notification_type: NotificationType,
     pub receiver_id: Uuid,
     pub task_id: Option<Uuid>,
+    pub jump_url: Option<String>,
     pub content_summary: String,
     pub status: NotificationStatus,
     pub failure_reason: Option<String>,
     pub sent_at: DateTime<Utc>,
+    pub read_at: Option<DateTime<Utc>>,
     pub dedupe_date: Option<NaiveDate>,
 }
 
@@ -46,6 +48,7 @@ pub struct NewNotificationRecord {
     pub notification_type: NotificationType,
     pub receiver_id: Uuid,
     pub task_id: Option<Uuid>,
+    pub jump_url: Option<String>,
     pub content_summary: String,
     pub status: NotificationStatus,
     pub failure_reason: Option<String>,
@@ -68,6 +71,17 @@ pub trait NotificationRepository: Clone + Send + Sync + 'static {
     ) -> Result<NotificationRecord, NotificationRepositoryError>;
 
     async fn list_records(&self) -> Result<Vec<NotificationRecord>, NotificationRepositoryError>;
+
+    async fn list_records_for_receiver(
+        &self,
+        receiver_id: Uuid,
+    ) -> Result<Vec<NotificationRecord>, NotificationRepositoryError>;
+
+    async fn mark_record_read(
+        &self,
+        record_id: Uuid,
+        receiver_id: Uuid,
+    ) -> Result<Option<NotificationRecord>, NotificationRepositoryError>;
 
     async fn has_record(
         &self,
@@ -121,10 +135,12 @@ impl NotificationRepository for MemoryNotificationRepository {
             notification_type: record.notification_type,
             receiver_id: record.receiver_id,
             task_id: record.task_id,
+            jump_url: record.jump_url,
             content_summary: record.content_summary,
             status: record.status,
             failure_reason: record.failure_reason,
             sent_at: Utc::now(),
+            read_at: None,
             dedupe_date: record.dedupe_date,
         };
         self.inner
@@ -144,6 +160,45 @@ impl NotificationRepository for MemoryNotificationRepository {
             .clone();
         records.sort_by(|left, right| right.sent_at.cmp(&left.sent_at));
         Ok(records)
+    }
+
+    async fn list_records_for_receiver(
+        &self,
+        receiver_id: Uuid,
+    ) -> Result<Vec<NotificationRecord>, NotificationRepositoryError> {
+        let mut records = self
+            .inner
+            .lock()
+            .expect("memory notification repository lock")
+            .records
+            .iter()
+            .filter(|record| record.receiver_id == receiver_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| right.sent_at.cmp(&left.sent_at));
+        Ok(records)
+    }
+
+    async fn mark_record_read(
+        &self,
+        record_id: Uuid,
+        receiver_id: Uuid,
+    ) -> Result<Option<NotificationRecord>, NotificationRepositoryError> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("memory notification repository lock");
+        let Some(record) = state
+            .records
+            .iter_mut()
+            .find(|record| record.id == record_id && record.receiver_id == receiver_id)
+        else {
+            return Ok(None);
+        };
+        if record.read_at.is_none() {
+            record.read_at = Some(Utc::now());
+        }
+        Ok(Some(record.clone()))
     }
 
     async fn has_record(
@@ -230,17 +285,18 @@ impl NotificationRepository for SqlxNotificationRepository {
         validate_new_record(&record)?;
         let row = sqlx::query(
             "insert into notification_records (
-                id, notification_type, receiver_id, task_id, content_summary, status,
+                id, notification_type, receiver_id, task_id, jump_url, content_summary, status,
                 failure_reason, dedupe_date
              )
-             values ($1, $2, $3, $4, $5, $6, $7, $8)
-             returning id, notification_type, receiver_id, task_id, content_summary, status,
-                       failure_reason, sent_at, dedupe_date",
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             returning id, notification_type, receiver_id, task_id, jump_url, content_summary,
+                       status, failure_reason, sent_at, read_at, dedupe_date",
         )
         .bind(Uuid::new_v4())
         .bind(record.notification_type.as_str())
         .bind(record.receiver_id)
         .bind(record.task_id)
+        .bind(record.jump_url)
         .bind(record.content_summary)
         .bind(record.status.as_str())
         .bind(record.failure_reason)
@@ -254,8 +310,8 @@ impl NotificationRepository for SqlxNotificationRepository {
 
     async fn list_records(&self) -> Result<Vec<NotificationRecord>, NotificationRepositoryError> {
         sqlx::query(
-            "select id, notification_type, receiver_id, task_id, content_summary, status,
-                    failure_reason, sent_at, dedupe_date
+            "select id, notification_type, receiver_id, task_id, jump_url, content_summary, status,
+                    failure_reason, sent_at, read_at, dedupe_date
              from notification_records
              order by sent_at desc",
         )
@@ -265,6 +321,47 @@ impl NotificationRepository for SqlxNotificationRepository {
         .into_iter()
         .map(row_to_record)
         .collect()
+    }
+
+    async fn list_records_for_receiver(
+        &self,
+        receiver_id: Uuid,
+    ) -> Result<Vec<NotificationRecord>, NotificationRepositoryError> {
+        sqlx::query(
+            "select id, notification_type, receiver_id, task_id, jump_url, content_summary, status,
+                    failure_reason, sent_at, read_at, dedupe_date
+             from notification_records
+             where receiver_id = $1
+             order by sent_at desc",
+        )
+        .bind(receiver_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| NotificationRepositoryError::Database)?
+        .into_iter()
+        .map(row_to_record)
+        .collect()
+    }
+
+    async fn mark_record_read(
+        &self,
+        record_id: Uuid,
+        receiver_id: Uuid,
+    ) -> Result<Option<NotificationRecord>, NotificationRepositoryError> {
+        let row = sqlx::query(
+            "update notification_records
+             set read_at = coalesce(read_at, now())
+             where id = $1 and receiver_id = $2
+             returning id, notification_type, receiver_id, task_id, jump_url, content_summary,
+                       status, failure_reason, sent_at, read_at, dedupe_date",
+        )
+        .bind(record_id)
+        .bind(receiver_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| NotificationRepositoryError::Database)?;
+
+        row.map(row_to_record).transpose()
     }
 
     async fn has_record(
@@ -452,6 +549,9 @@ fn row_to_record(
         task_id: row
             .try_get("task_id")
             .map_err(|_| NotificationRepositoryError::Database)?,
+        jump_url: row
+            .try_get("jump_url")
+            .map_err(|_| NotificationRepositoryError::Database)?,
         content_summary: row
             .try_get("content_summary")
             .map_err(|_| NotificationRepositoryError::Database)?,
@@ -461,6 +561,9 @@ fn row_to_record(
             .map_err(|_| NotificationRepositoryError::Database)?,
         sent_at: row
             .try_get("sent_at")
+            .map_err(|_| NotificationRepositoryError::Database)?,
+        read_at: row
+            .try_get("read_at")
             .map_err(|_| NotificationRepositoryError::Database)?,
         dedupe_date: row
             .try_get("dedupe_date")

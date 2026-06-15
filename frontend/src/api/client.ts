@@ -134,6 +134,10 @@ export const api = {
     (await http.patch(`/notification-rules/${ruleType}`, { enabled })).data,
   notificationRecords: async (): Promise<NotificationRecord[]> =>
     (await http.get("/notification-records")).data,
+  myNotifications: async (): Promise<NotificationRecord[]> =>
+    (await http.get("/my-notifications")).data,
+  markMyNotificationRead: async (notificationId: string): Promise<NotificationRecord> =>
+    (await http.patch(`/my-notifications/${notificationId}/read`)).data,
   createTaskComment: async (
     taskId: string,
     content: string,

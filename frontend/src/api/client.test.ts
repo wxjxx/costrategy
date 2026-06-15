@@ -191,4 +191,30 @@ describe("api client", () => {
     expect(post.mock.calls[0]?.[0]).toBe("/rich-text/images");
     expect(post.mock.calls[0]?.[1]).toBeInstanceOf(FormData);
   });
+
+  it("calls current user notification list and read endpoints", async () => {
+    const notification = {
+      id: "notice-1",
+      notification_type: "task_assigned",
+      receiver_id: "user-1",
+      task_id: "task-1",
+      jump_url: "/tasks/task-1",
+      content_summary: "新任务分配",
+      status: "success",
+      sent_at: "2026-06-10T08:00:00Z",
+    };
+    const get = vi.spyOn(http, "get").mockResolvedValueOnce({ data: [notification] });
+    const patch = vi
+      .spyOn(http, "patch")
+      .mockResolvedValueOnce({ data: { ...notification, read_at: "2026-06-10T09:00:00Z" } });
+
+    await expect(api.myNotifications()).resolves.toEqual([notification]);
+    await expect(api.markMyNotificationRead("notice-1")).resolves.toMatchObject({
+      id: "notice-1",
+      read_at: "2026-06-10T09:00:00Z",
+    });
+
+    expect(get).toHaveBeenCalledWith("/my-notifications");
+    expect(patch).toHaveBeenCalledWith("/my-notifications/notice-1/read");
+  });
 });

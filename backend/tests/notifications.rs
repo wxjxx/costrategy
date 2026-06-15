@@ -41,7 +41,8 @@ async fn task_assigned_notification_sends_dingtalk_and_records_success() {
     assert!(sent[0].message.contains("需求文档确认"));
     assert!(sent[0].message.contains("项目管理系统"));
     assert!(sent[0].message.contains("2026-06-10"));
-    assert!(sent[0].message.contains("/workbench?task_id="));
+    assert!(!sent[0].message.contains("进入任务详情"));
+    assert!(!sent[0].message.contains("/tasks/"));
 
     let records = notifications.list_records().await.unwrap();
     assert_eq!(records.len(), 1);
@@ -49,6 +50,11 @@ async fn task_assigned_notification_sends_dingtalk_and_records_success() {
     assert_eq!(records[0].status, NotificationStatus::Success);
     assert_eq!(records[0].receiver_id, assignee.id);
     assert!(records[0].failure_reason.is_none());
+    let record_json = serde_json::to_value(&records[0]).unwrap();
+    assert_eq!(
+        record_json["jump_url"],
+        format!("/tasks/{}", records[0].task_id.unwrap())
+    );
 }
 
 #[tokio::test]

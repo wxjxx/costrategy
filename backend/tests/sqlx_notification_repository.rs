@@ -46,6 +46,7 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
             notification_type: NotificationType::TaskAssigned,
             receiver_id: receiver.id,
             task_id: None,
+            jump_url: None,
             content_summary: "新任务分配".to_string(),
             status: NotificationStatus::Success,
             failure_reason: None,
@@ -62,6 +63,21 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
         .find(|record| record.id == created.id)
         .unwrap();
     assert_eq!(record.content_summary, "新任务分配");
+    assert!(record.read_at.is_none());
+    assert_eq!(record.jump_url, None);
+    let receiver_records = notifications
+        .list_records_for_receiver(receiver.id)
+        .await
+        .unwrap();
+    assert!(receiver_records
+        .iter()
+        .any(|record| record.id == created.id));
+    let read_record = notifications
+        .mark_record_read(created.id, receiver.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(read_record.read_at.is_some());
 
     let project_id = Uuid::new_v4();
     let task_id = Uuid::new_v4();
@@ -97,6 +113,7 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
             notification_type: NotificationType::DueTomorrow,
             receiver_id: receiver.id,
             task_id: Some(task_id),
+            jump_url: Some(format!("/tasks/{task_id}")),
             content_summary: "截止前一天提醒".to_string(),
             status: NotificationStatus::Success,
             failure_reason: None,

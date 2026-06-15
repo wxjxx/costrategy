@@ -168,12 +168,16 @@ function notificationTaskId(row: { task_id?: string; content_summary: string }):
   return row.task_id ?? row.content_summary.match(/task_id=([0-9a-f-]{36})/iu)?.[1];
 }
 
+function notificationJumpUrl(row: { jump_url?: string; task_id?: string; content_summary: string }): string | undefined {
+  return row.jump_url ?? (notificationTaskId(row) ? `/tasks/${notificationTaskId(row)}` : undefined);
+}
+
 function notificationSummaryText(content: string): string {
   return content.replace(/\n?进入任务详情：.*$/su, "").trim();
 }
 
-function taskDetailUrl(taskId: string): string {
-  return `${window.location.origin}/tasks/${taskId}`;
+function absoluteUrl(path: string): string {
+  return path.startsWith("http") ? path : `${window.location.origin}${path}`;
 }
 
 function syncStatusLabel(status?: string): string {
@@ -298,10 +302,10 @@ function showConnectionStatus() {
           <template #default="{ row }">
             <div class="notification-summary">
               <span>{{ notificationSummaryText(row.content_summary) }}</span>
-              <template v-if="notificationTaskId(row)">
+              <template v-if="notificationJumpUrl(row)">
                 <span>进入任务详情：</span>
-                <a :href="taskDetailUrl(notificationTaskId(row)!)" target="_blank" rel="noopener">
-                  {{ taskDetailUrl(notificationTaskId(row)!) }}
+                <a :href="absoluteUrl(notificationJumpUrl(row)!)" target="_blank" rel="noopener">
+                  {{ absoluteUrl(notificationJumpUrl(row)!) }}
                 </a>
               </template>
             </div>

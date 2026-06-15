@@ -22,6 +22,7 @@ async fn admin_can_list_notification_records_and_manager_cannot() {
             notification_type: NotificationType::TaskAssigned,
             receiver_id: fixture.employee_id,
             task_id: None,
+            jump_url: None,
             content_summary: "新任务分配".to_string(),
             status: NotificationStatus::Success,
             failure_reason: None,
@@ -110,11 +111,75 @@ async fn admin_can_list_and_update_notification_rules() {
     assert_eq!(updated["updated_by"], fixture.admin_id.to_string());
 }
 
+#[actix_web::test]
+async fn current_user_can_list_and_mark_own_notifications_read() {
+    let fixture = NotificationRouteFixture::new().await;
+    let app = notification_test_app(&fixture).await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+    let own_record = fixture
+        .notifications
+        .create_record(NewNotificationRecord {
+            notification_type: NotificationType::TaskAssigned,
+            receiver_id: fixture.employee_id,
+            task_id: None,
+            jump_url: Some("/tasks/task-1".to_string()),
+            content_summary: "新任务分配".to_string(),
+            status: NotificationStatus::Success,
+            failure_reason: None,
+            dedupe_date: None,
+        })
+        .await
+        .unwrap();
+    fixture
+        .notifications
+        .create_record(NewNotificationRecord {
+            notification_type: NotificationType::TaskOverdue,
+            receiver_id: fixture.manager_id,
+            task_id: None,
+            jump_url: Some("/tasks/task-2".to_string()),
+            content_summary: "其他人的通知".to_string(),
+            status: NotificationStatus::Success,
+            failure_reason: None,
+            dedupe_date: None,
+        })
+        .await
+        .unwrap();
+
+    let list_response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/my-notifications")
+            .cookie(employee_cookie.clone())
+            .to_request(),
+    )
+    .await;
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let listed: serde_json::Value = test::read_body_json(list_response).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], own_record.id.to_string());
+    assert_eq!(listed[0]["content_summary"], "新任务分配");
+    assert!(listed[0]["read_at"].is_null());
+
+    let read_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri(&format!("/api/my-notifications/{}/read", own_record.id))
+            .cookie(employee_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(read_response.status(), StatusCode::OK);
+    let read: serde_json::Value = test::read_body_json(read_response).await;
+    assert_eq!(read["id"], own_record.id.to_string());
+    assert!(read["read_at"].as_str().is_some());
+}
+
 struct NotificationRouteFixture {
     dingtalk: MockDingTalkClient,
     users: MemoryUserRepository,
     notifications: MemoryNotificationRepository,
     admin_id: uuid::Uuid,
+    manager_id: uuid::Uuid,
     employee_id: uuid::Uuid,
 }
 
@@ -124,7 +189,7 @@ impl NotificationRouteFixture {
         let admin = users
             .insert_user(new_user("admin", "管理员", UserRole::Admin))
             .await;
-        users
+        let manager = users
             .insert_user(new_user("manager", "管理人员", UserRole::Manager))
             .await;
         let employee = users
@@ -132,13 +197,15 @@ impl NotificationRouteFixture {
             .await;
         let dingtalk = MockDingTalkClient::default()
             .with_login_identity("admin-code", identity("admin"))
-            .with_login_identity("manager-code", identity("manager"));
+            .with_login_identity("manager-code", identity("manager"))
+            .with_login_identity("employee-code", identity("employee"));
 
         Self {
             dingtalk,
             users,
             notifications: MemoryNotificationRepository::default(),
             admin_id: admin.id,
+            manager_id: manager.id,
             employee_id: employee.id,
         }
     }

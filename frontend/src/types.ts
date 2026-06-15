@@ -193,8 +193,10 @@ export interface NotificationRecord {
   notification_type: string;
   receiver_id: string;
   task_id?: string;
+  jump_url?: string;
   content_summary: string;
   status: "success" | "failed";
   sent_at: string;
+  read_at?: string;
   failure_reason?: string;
 }
