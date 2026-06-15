@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  getAuthenticatedUser,
+  hasAuthenticationSucceeded,
+  markAuthenticationSucceeded,
+  setAuthenticatedUser,
+} from "@/auth/sessionState";
 import { api, http, redirectUnauthorizedError, setUnauthorizedRedirectHandler } from "./client";
 
 describe("api client", () => {
@@ -14,14 +20,24 @@ describe("api client", () => {
     await expect(api.tasks()).rejects.toBe(error);
   });
 
-  it("redirects to the 401 page when backend returns unauthorized", async () => {
+  it("clears cached authentication and returns home when backend session expires", async () => {
     const redirects: string[] = [];
+    setAuthenticatedUser({
+      id: "user-1",
+      name: "张三",
+      role: "employee",
+      departments: [],
+      permissions: [],
+    });
+    markAuthenticationSucceeded();
     const error = { response: { status: 401 } };
     setUnauthorizedRedirectHandler((path) => redirects.push(path));
 
     await expect(redirectUnauthorizedError(error)).rejects.toBe(error);
 
-    expect(redirects).toEqual(["/401"]);
+    expect(redirects).toEqual(["/"]);
+    expect(hasAuthenticationSucceeded()).toBe(false);
+    expect(getAuthenticatedUser()).toBeUndefined();
   });
 
   it("can skip the automatic 401 redirect for auth bootstrap requests", async () => {

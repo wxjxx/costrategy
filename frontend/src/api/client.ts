@@ -1,4 +1,5 @@
 import axios, { type AxiosRequestConfig } from "axios";
+import { resetAuthenticationState } from "@/auth/sessionState";
 import type {
   CurrentUser,
   CreateProjectPayload,
@@ -58,14 +59,16 @@ export function redirectUnauthorizedError(error: unknown): Promise<never> {
   }
 
   if (axios.isAxiosError(error) && error.response?.status === 401) {
-    unauthorizedRedirectHandler?.("/401");
+    resetAuthenticationState();
+    unauthorizedRedirectHandler?.("/");
   } else if (
     typeof error === "object" &&
     error !== null &&
     "response" in error &&
     (error as { response?: { status?: number } }).response?.status === 401
   ) {
-    unauthorizedRedirectHandler?.("/401");
+    resetAuthenticationState();
+    unauthorizedRedirectHandler?.("/");
   }
   return Promise.reject(error);
 }

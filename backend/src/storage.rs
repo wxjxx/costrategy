@@ -148,7 +148,18 @@ impl AttachmentStorage for RustfsAttachmentStorage {
         if let Some(mime_type) = mime_type {
             request = request.content_type(mime_type);
         }
-        request.send().await.map_err(|_| StorageError::Upload)?;
+        request.send().await.map_err(|error| {
+            log::error!(
+                "{}",
+                storage_operation_error_message(
+                    "upload",
+                    &self.bucket,
+                    object_key,
+                    &error.to_string(),
+                )
+            );
+            StorageError::Upload
+        })?;
         Ok(())
     }
 
@@ -190,5 +201,36 @@ fn normalize_endpoint(endpoint: &str) -> String {
         endpoint.to_string()
     } else {
         format!("http://{endpoint}")
+    }
+}
+
+fn storage_operation_error_message(
+    operation: &str,
+    bucket: &str,
+    object_key: &str,
+    error: &str,
+) -> String {
+    format!(
+        "rustfs storage operation failed: operation={operation}, bucket={bucket}, object_key={object_key}, error={error}"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_operation_error_message_includes_safe_diagnostics() {
+        let message = storage_operation_error_message(
+            "upload",
+            "costrategy",
+            "rich-text/images/image.png",
+            "connection refused",
+        );
+
+        assert!(message.contains("operation=upload"));
+        assert!(message.contains("bucket=costrategy"));
+        assert!(message.contains("object_key=rich-text/images/image.png"));
+        assert!(message.contains("error=connection refused"));
     }
 }
