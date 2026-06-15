@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { useQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
 import { Delete, Download, Edit, UploadFilled } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import StatusTag from "@/components/StatusTag.vue";
@@ -76,7 +76,17 @@ const uploadMutation = useMutation({
   onError: () => ElMessage.error("附件上传失败，请查看后端日志"),
 });
 
-const deleteMutation = useMutation({
+const taskDeleteMutation = useMutation({
+  mutationFn: () => api.deleteTask(taskId.value),
+  onSuccess: () => {
+    ElMessage.success("任务已删除");
+    refreshTaskQueries();
+    router.push("/workbench");
+  },
+  onError: () => ElMessage.error("只有任务创建人或管理人员可以删除任务"),
+});
+
+const attachmentDeleteMutation = useMutation({
   mutationFn: (attachmentId: string) =>
     api.deleteTaskAttachment(taskId.value, attachmentId),
   onSuccess: () => {
@@ -124,6 +134,20 @@ function openRichContentImage(event: MouseEvent) {
   if (!(target instanceof HTMLImageElement)) return;
   previewImageUrl.value = target.currentSrc || target.src;
 }
+
+async function deleteCurrentTask() {
+  if (!task.value) return;
+  try {
+    await ElMessageBox.confirm(`确认删除任务“${task.value.title}”？`, "删除任务", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+    taskDeleteMutation.mutate();
+  } catch {
+    // User cancelled.
+  }
+}
 </script>
 
 <template>
@@ -134,10 +158,16 @@ function openRichContentImage(event: MouseEvent) {
         <StatusTag :status="getDisplayStatus(task)" />
         <PriorityTag :priority="task.priority" />
       </div>
-      <ElButton type="primary" link @click="router.push(`/tasks/${task.id}/edit`)">
-        <ElIcon><Edit /></ElIcon>
-        编辑
-      </ElButton>
+      <div class="task-title-actions">
+        <ElButton type="primary" link @click="router.push(`/tasks/${task.id}/edit`)">
+          <ElIcon><Edit /></ElIcon>
+          编辑
+        </ElButton>
+        <ElButton type="danger" link @click="deleteCurrentTask">
+          <ElIcon><Delete /></ElIcon>
+          删除
+        </ElButton>
+      </div>
     </section>
 
     <section class="content-card info-card">
@@ -196,7 +226,7 @@ function openRichContentImage(event: MouseEvent) {
                 <ElButton link type="primary" @click="downloadAttachment(row.id, row.file_name)">
                   <ElIcon><Download /></ElIcon>
                 </ElButton>
-                <ElButton link type="danger" @click="deleteMutation.mutate(row.id)">
+                <ElButton link type="danger" @click="attachmentDeleteMutation.mutate(row.id)">
                   <ElIcon><Delete /></ElIcon>
                 </ElButton>
               </template>

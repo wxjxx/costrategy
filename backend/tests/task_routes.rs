@@ -11,7 +11,9 @@ use costrategy_backend::notifications::{
 use costrategy_backend::projects::{
     CreateProject, MemoryProjectRepository, ProjectRepository, ProjectStatus,
 };
-use costrategy_backend::tasks::MemoryTaskRepository;
+use costrategy_backend::tasks::{
+    CreateTask, MemoryTaskRepository, TaskPriority, TaskRepository, TaskStatus,
+};
 use costrategy_backend::users::{MemoryUserRepository, NewUser, UserStatus};
 use serde_json::json;
 use uuid::Uuid;
@@ -114,6 +116,55 @@ async fn manager_can_create_edit_list_and_archive_task() {
     .await;
     let tasks: serde_json::Value = test::read_body_json(list_after_archive).await;
     assert_eq!(tasks.as_array().unwrap().len(), 0);
+}
+
+#[actix_web::test]
+async fn task_creator_or_manager_can_delete_task() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+    let other_cookie = login_cookie(&app, "other-code").await;
+
+    let manager_created_task_id = create_task(
+        &app,
+        manager_cookie.clone(),
+        fixture.task_payload(fixture.employee_id),
+    )
+    .await;
+
+    let manager_delete = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/tasks/{manager_created_task_id}"))
+            .cookie(manager_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(manager_delete.status(), StatusCode::OK);
+
+    let employee_created_task_id = fixture
+        .insert_task_for_creator(fixture.employee_id, "员工创建的任务")
+        .await;
+    let other_delete = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/tasks/{employee_created_task_id}"))
+            .cookie(other_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(other_delete.status(), StatusCode::FORBIDDEN);
+
+    let creator_delete = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/tasks/{employee_created_task_id}"))
+            .cookie(employee_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(creator_delete.status(), StatusCode::OK);
 }
 
 #[actix_web::test]
@@ -572,6 +623,26 @@ impl TaskRouteFixture {
             "due_date": "2026-06-10",
             "description_json": {"type": "doc", "content": []}
         })
+    }
+
+    async fn insert_task_for_creator(&self, creator_id: Uuid, title: &str) -> String {
+        let task = self
+            .tasks
+            .create_task(CreateTask {
+                project_id: self.project_id,
+                title: title.to_string(),
+                assignee_id: self.employee_id,
+                assignee_ids: vec![self.employee_id],
+                status: TaskStatus::Todo,
+                priority: TaskPriority::Medium,
+                start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                due_date: NaiveDate::from_ymd_opt(2026, 6, 10).unwrap(),
+                description_json: json!({"type": "doc", "content": []}),
+                creator_id,
+            })
+            .await
+            .unwrap();
+        task.id.to_string()
     }
 }
 

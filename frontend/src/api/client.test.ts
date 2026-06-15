@@ -137,6 +137,21 @@ describe("api client", () => {
     });
   });
 
+  it("calls project and task delete endpoints", async () => {
+    const project = { id: "project-1", status: "archived" };
+    const task = { id: "task-1", archived: true };
+    const del = vi
+      .spyOn(http, "delete")
+      .mockResolvedValueOnce({ data: project })
+      .mockResolvedValueOnce({ data: task });
+
+    await expect(api.deleteProject("project-1")).resolves.toBe(project);
+    await expect(api.deleteTask("task-1")).resolves.toBe(task);
+
+    expect(del).toHaveBeenNthCalledWith(1, "/projects/project-1");
+    expect(del).toHaveBeenNthCalledWith(2, "/tasks/task-1");
+  });
+
   it("updates settings with the backend batch payload", async () => {
     const response = { settings: [], connection_status: { dingtalk: "not_checked", rustfs: "configured" } };
     const put = vi.spyOn(http, "put").mockResolvedValue({ data: response });

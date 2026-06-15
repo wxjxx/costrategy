@@ -754,16 +754,14 @@ impl TaskRepository for SqlxTaskRepository {
         &self,
         due_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
-        let rows = sqlx::query(
-            &format!(
-                "{} 
+        let rows = sqlx::query(&format!(
+            "{} 
              where t.archived_at is null
                and t.status <> 'done'
                and t.due_date = $1
              order by t.due_date asc, t.title asc",
-                task_select_sql("from tasks t"),
-            ),
-        )
+            task_select_sql("from tasks t"),
+        ))
         .bind(due_date)
         .fetch_all(&self.pool)
         .await
@@ -776,16 +774,14 @@ impl TaskRepository for SqlxTaskRepository {
         &self,
         local_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
-        let rows = sqlx::query(
-            &format!(
-                "{} 
+        let rows = sqlx::query(&format!(
+            "{} 
              where t.archived_at is null
                and t.status <> 'done'
                and t.due_date < $1
              order by t.due_date asc, t.title asc",
-                task_select_sql("from tasks t"),
-            ),
-        )
+            task_select_sql("from tasks t"),
+        ))
         .bind(local_date)
         .fetch_all(&self.pool)
         .await
@@ -795,12 +791,10 @@ impl TaskRepository for SqlxTaskRepository {
     }
 
     async fn get_task(&self, id: Uuid) -> Result<Task, TaskRepositoryError> {
-        let row = sqlx::query(
-            &format!(
-                "{} where t.id = $1 and t.archived_at is null",
-                task_select_sql("from tasks t"),
-            ),
-        )
+        let row = sqlx::query(&format!(
+            "{} where t.id = $1 and t.archived_at is null",
+            task_select_sql("from tasks t"),
+        ))
         .bind(id)
         .fetch_optional(&self.pool)
         .await
@@ -874,9 +868,8 @@ impl TaskRepository for SqlxTaskRepository {
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
         let task_id = Uuid::new_v4();
-        let row = sqlx::query(
-            &format!(
-                "with inserted as (
+        let row = sqlx::query(&format!(
+            "with inserted as (
                 insert into tasks (
                     id, project_id, title, assignee_id, status, priority, start_date, due_date,
                     description_json, creator_id, updated_at
@@ -886,9 +879,8 @@ impl TaskRepository for SqlxTaskRepository {
                           due_date, description_json, creator_id, archived_at
              )
              {}",
-                task_select_sql("from inserted t"),
-            ),
-        )
+            task_select_sql("from inserted t"),
+        ))
         .bind(task_id)
         .bind(task.project_id)
         .bind(task.title)
@@ -1088,9 +1080,8 @@ impl TaskRepository for SqlxTaskRepository {
             .begin()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        let row = sqlx::query(
-            &format!(
-                "with updated as (
+        let row = sqlx::query(&format!(
+            "with updated as (
                 update tasks set
                     project_id = $2,
                     title = $3,
@@ -1106,9 +1097,8 @@ impl TaskRepository for SqlxTaskRepository {
                           due_date, description_json, creator_id, archived_at
              )
              {}",
-                task_select_sql("from updated t"),
-            ),
-        )
+            task_select_sql("from updated t"),
+        ))
         .bind(id)
         .bind(task.project_id)
         .bind(task.title)
@@ -1160,18 +1150,16 @@ impl TaskRepository for SqlxTaskRepository {
             status,
         )?;
 
-        let row = sqlx::query(
-            &format!(
-                "with updated as (
+        let row = sqlx::query(&format!(
+            "with updated as (
                 update tasks set status = $2, updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
              {}",
-                task_select_sql("from updated t"),
-            ),
-        )
+            task_select_sql("from updated t"),
+        ))
         .bind(id)
         .bind(status.as_str())
         .fetch_one(&mut *tx)
@@ -1190,18 +1178,16 @@ impl TaskRepository for SqlxTaskRepository {
             .begin()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        let row = sqlx::query(
-            &format!(
-                "with archived as (
+        let row = sqlx::query(&format!(
+            "with archived as (
                 update tasks set archived_at = now(), updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
                           due_date, description_json, creator_id, archived_at
              )
              {}",
-                task_select_sql("from archived t"),
-            ),
-        )
+            task_select_sql("from archived t"),
+        ))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await
@@ -1688,15 +1674,13 @@ async fn replace_task_assignees(
         .map_err(|_| TaskRepositoryError::Database)?;
 
     for (position, assignee_id) in assignee_ids.iter().enumerate() {
-        sqlx::query(
-            "insert into task_assignees (task_id, user_id, position) values ($1, $2, $3)",
-        )
-        .bind(task_id)
-        .bind(*assignee_id)
-        .bind(position as i32)
-        .execute(&mut **tx)
-        .await
-        .map_err(|_| TaskRepositoryError::Database)?;
+        sqlx::query("insert into task_assignees (task_id, user_id, position) values ($1, $2, $3)")
+            .bind(task_id)
+            .bind(*assignee_id)
+            .bind(position as i32)
+            .execute(&mut **tx)
+            .await
+            .map_err(|_| TaskRepositoryError::Database)?;
     }
     Ok(())
 }

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useMutation, useQueryClient } from "@tanstack/vue-query";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useRouter } from "vue-router";
+import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import StatusTag from "@/components/StatusTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
@@ -15,9 +18,30 @@ import { clampPage, pageRows } from "@/utils/pagination";
 const props = defineProps<{ tasks: Task[] }>();
 
 const router = useRouter();
+const queryClient = useQueryClient();
 const currentPage = ref(1);
 const pageSize = ref(10);
 const pagedTasks = computed(() => pageRows(props.tasks, currentPage.value, pageSize.value));
+
+const deleteMutation = useMutation({
+  mutationFn: (taskId: string) => api.deleteTask(taskId),
+  onSuccess: () => ElMessage.success("任务已删除"),
+  onError: () => ElMessage.error("只有任务创建人或管理人员可以删除任务"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+});
+
+async function deleteTask(task: Task) {
+  try {
+    await ElMessageBox.confirm(`确认删除任务“${task.title}”？`, "删除任务", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+    deleteMutation.mutate(task.id);
+  } catch {
+    // User cancelled.
+  }
+}
 
 watch(
   () => props.tasks.length,
@@ -56,9 +80,10 @@ watch(pageSize, () => {
     </ElTableColumn>
     <ElTableColumn prop="start_date" label="开始日期" width="136" />
     <ElTableColumn prop="due_date" label="截止日期" sortable width="136" />
-    <ElTableColumn label="操作" width="100">
+    <ElTableColumn label="操作" width="140">
       <template #default="{ row }">
         <ElButton link type="primary" @click.stop="router.push(`/tasks/${row.id}/edit`)">编辑</ElButton>
+        <ElButton link type="danger" @click.stop="deleteTask(row)">删除</ElButton>
       </template>
     </ElTableColumn>
   </ElTable>

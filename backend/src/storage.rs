@@ -156,6 +156,7 @@ impl AttachmentStorage for RustfsAttachmentStorage {
                     &self.bucket,
                     object_key,
                     &error.to_string(),
+                    &format!("{error:?}"),
                 )
             );
             StorageError::Upload
@@ -209,9 +210,10 @@ fn storage_operation_error_message(
     bucket: &str,
     object_key: &str,
     error: &str,
+    error_debug: &str,
 ) -> String {
     format!(
-        "rustfs storage operation failed: operation={operation}, bucket={bucket}, object_key={object_key}, error={error}"
+        "rustfs storage operation failed: operation={operation}, bucket={bucket}, object_key={object_key}, error={error}, error_debug={error_debug}"
     )
 }
 
@@ -226,11 +228,15 @@ mod tests {
             "costrategy",
             "rich-text/images/image.png",
             "connection refused",
+            "ConnectorError { kind: Io, source: connection refused }",
         );
 
         assert!(message.contains("operation=upload"));
         assert!(message.contains("bucket=costrategy"));
         assert!(message.contains("object_key=rich-text/images/image.png"));
         assert!(message.contains("error=connection refused"));
+        assert!(
+            message.contains("error_debug=ConnectorError { kind: Io, source: connection refused }")
+        );
     }
 }

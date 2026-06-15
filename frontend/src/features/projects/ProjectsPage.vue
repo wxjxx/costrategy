@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { Plus, Search } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
 import UserAvatar from "@/components/UserAvatar.vue";
 import type { CreateProjectPayload, Project, ProjectStatus, UpdateProjectPayload } from "@/types";
@@ -95,11 +95,25 @@ const saveMutation = useMutation({
   onSettled: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
 });
 
-const archiveMutation = useMutation({
-  mutationFn: (projectId: string) => api.archiveProject(projectId),
-  onSuccess: () => ElMessage.success("项目已归档"),
+const deleteMutation = useMutation({
+  mutationFn: (projectId: string) => api.deleteProject(projectId),
+  onSuccess: () => ElMessage.success("项目已删除"),
+  onError: () => ElMessage.error("只有系统管理员可以删除项目"),
   onSettled: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
 });
+
+async function deleteProject(project: Project) {
+  try {
+    await ElMessageBox.confirm(`确认删除项目“${project.name}”？`, "删除项目", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+    deleteMutation.mutate(project.id);
+  } catch {
+    // User cancelled.
+  }
+}
 
 function openProjectDialog(project?: Project) {
   editingProjectId.value = project?.id ?? "";
@@ -188,7 +202,7 @@ function openProjectDialog(project?: Project) {
         <ElTableColumn label="操作" width="160">
           <template #default="{ row }">
             <ElButton link type="primary" @click="openProjectDialog(row)">编辑</ElButton>
-            <ElButton link @click="archiveMutation.mutate(row.id)">归档</ElButton>
+            <ElButton link type="danger" @click="deleteProject(row)">删除</ElButton>
           </template>
         </ElTableColumn>
       </ElTable>

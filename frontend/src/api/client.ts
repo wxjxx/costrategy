@@ -102,6 +102,8 @@ export const api = {
     (await http.post("/tasks", payload)).data,
   updateTask: async (taskId: string, payload: TaskPayload): Promise<Task> =>
     (await http.put(`/tasks/${taskId}`, payload)).data,
+  deleteTask: async (taskId: string): Promise<Task> =>
+    (await http.delete(`/tasks/${taskId}`)).data,
   projects: async (): Promise<Project[]> => (await http.get("/projects")).data,
   createProject: async (payload: CreateProjectPayload): Promise<Project> =>
     (await http.post("/projects", payload)).data,
@@ -111,6 +113,8 @@ export const api = {
   ): Promise<Project> => (await http.put(`/projects/${projectId}`, payload)).data,
   archiveProject: async (projectId: string): Promise<Project> =>
     (await http.post(`/projects/${projectId}/archive`)).data,
+  deleteProject: async (projectId: string): Promise<Project> =>
+    (await http.delete(`/projects/${projectId}`)).data,
   users: async (): Promise<User[]> => (await http.get("/users")).data,
   updateUserRole: (userId: string, role: UserRole): Promise<User> =>
     http.patch(`/users/${userId}/role`, { role }).then((response) => response.data),

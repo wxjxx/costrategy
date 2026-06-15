@@ -154,6 +154,86 @@ async fn manager_can_create_update_list_and_archive_project() {
     assert_eq!(archived["status"], ProjectStatus::Archived.as_str());
 }
 
+#[actix_web::test]
+async fn only_admin_can_delete_project() {
+    let users = MemoryUserRepository::default();
+    let manager = users
+        .insert_user(NewUser {
+            dingtalk_user_id: "manager".to_string(),
+            union_id: None,
+            name: "管理人员".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Manager,
+            status: UserStatus::Active,
+        })
+        .await;
+    users
+        .insert_user(NewUser {
+            dingtalk_user_id: "admin".to_string(),
+            union_id: None,
+            name: "系统管理员".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Admin,
+            status: UserStatus::Active,
+        })
+        .await;
+    let dingtalk = MockDingTalkClient::default()
+        .with_login_identity(
+            "manager-code",
+            DingTalkLoginIdentity {
+                dingtalk_user_id: "manager".to_string(),
+                union_id: None,
+            },
+        )
+        .with_login_identity(
+            "admin-code",
+            DingTalkLoginIdentity {
+                dingtalk_user_id: "admin".to_string(),
+                union_id: None,
+            },
+        );
+    let app = project_test_app(dingtalk, users).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let admin_cookie = login_cookie(&app, "admin-code").await;
+
+    let create_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/projects")
+            .cookie(manager_cookie.clone())
+            .set_json(project_payload(Some(manager.id)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let created: serde_json::Value = test::read_body_json(create_response).await;
+    let project_id = created["id"].as_str().unwrap();
+
+    let manager_delete = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/projects/{project_id}"))
+            .cookie(manager_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(manager_delete.status(), StatusCode::FORBIDDEN);
+
+    let admin_delete = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/projects/{project_id}"))
+            .cookie(admin_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(admin_delete.status(), StatusCode::OK);
+    let deleted: serde_json::Value = test::read_body_json(admin_delete).await;
+    assert_eq!(deleted["status"], ProjectStatus::Archived.as_str());
+}
+
 async fn project_test_app(
     dingtalk: MockDingTalkClient,
     users: MemoryUserRepository,

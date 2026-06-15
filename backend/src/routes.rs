@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::auth::{CurrentUser, DingtalkAuthService, Permission, SESSION_COOKIE_NAME};
+use crate::auth::{CurrentUser, DingtalkAuthService, Permission, UserRole, SESSION_COOKIE_NAME};
 use crate::config::AppConfig;
 use crate::dingtalk::{DingTalkClient, DingtalkSyncService};
 use crate::error::{ApiErrorCode, AppError};
@@ -72,6 +72,10 @@ where
             web::put().to(update_project::<C, R, P>),
         )
         .route(
+            "/api/projects/{project_id}",
+            web::delete().to(delete_project::<C, R, P>),
+        )
+        .route(
             "/api/projects/{project_id}/archive",
             web::post().to(archive_project::<C, R, P>),
         );
@@ -122,6 +126,10 @@ where
         .route(
             "/api/tasks/{task_id}",
             web::put().to(update_task::<C, R, T, N>),
+        )
+        .route(
+            "/api/tasks/{task_id}",
+            web::delete().to(delete_task::<C, R, T>),
         )
         .route(
             "/api/tasks/{task_id}/status",
@@ -697,6 +705,29 @@ where
     P: ProjectRepository,
 {
     require_project_manager(&state, &request)?;
+    Ok(HttpResponse::Ok().json(
+        projects
+            .archive_project(path.into_inner())
+            .await
+            .map_err(project_error_to_app)?,
+    ))
+}
+
+async fn delete_project<C, R, P>(
+    state: web::Data<AppState<C, R>>,
+    projects: web::Data<P>,
+    request: HttpRequest,
+    path: web::Path<uuid::Uuid>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    P: ProjectRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    if current_user.role != UserRole::Admin {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
     Ok(HttpResponse::Ok().json(
         projects
             .archive_project(path.into_inner())
@@ -1322,7 +1353,10 @@ where
     let current_user = require_current_user(&state, &request)?;
     let task = tasks.get_task(*path).await.map_err(task_error_to_app)?;
     if !current_user.role.has(Permission::UpdateAnyTaskStatus)
-        && !task.assignees.iter().any(|assignee| assignee.id == current_user.id)
+        && !task
+            .assignees
+            .iter()
+            .any(|assignee| assignee.id == current_user.id)
     {
         return Err(AppError::forbidden(ApiErrorCode::TaskNotAssignee));
     }
@@ -1355,6 +1389,34 @@ where
     Ok(HttpResponse::Ok().json(
         tasks
             .archive_task(path.into_inner(), current_user.id)
+            .await
+            .map_err(task_error_to_app)?,
+    ))
+}
+
+async fn delete_task<C, R, T>(
+    state: web::Data<AppState<C, R>>,
+    tasks: web::Data<T>,
+    request: HttpRequest,
+    path: web::Path<uuid::Uuid>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    T: TaskRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    let task_id = path.into_inner();
+    let task = tasks.get_task(task_id).await.map_err(task_error_to_app)?;
+    let can_delete =
+        task.creator_id == current_user.id || current_user.role.has(Permission::ArchiveTask);
+    if !can_delete {
+        return Err(AppError::forbidden(ApiErrorCode::AuthForbidden));
+    }
+
+    Ok(HttpResponse::Ok().json(
+        tasks
+            .archive_task(task_id, current_user.id)
             .await
             .map_err(task_error_to_app)?,
     ))
