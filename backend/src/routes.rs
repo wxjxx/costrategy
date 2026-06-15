@@ -489,7 +489,7 @@ where
     C: DingTalkClient,
     R: UserRepository,
 {
-    require_admin(&state, &request, Permission::ManageUsers)?;
+    require_current_user(&state, &request)?;
     Ok(HttpResponse::Ok().json(state.users.list_users().await.map_err(user_error_to_app)?))
 }
 

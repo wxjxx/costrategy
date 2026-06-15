@@ -11,6 +11,12 @@ import UnauthorizedPage from "@/features/auth/UnauthorizedPage.vue";
 import { api } from "@/api/client";
 import { canAccessAdminModules } from "@/auth/accessControl";
 import { loadCurrentUserWithDingtalkLogin, resolveAdminToken } from "@/auth/dingtalkAuth";
+import {
+  getAuthenticatedUser,
+  hasAuthenticationSucceeded,
+  markAuthenticationSucceeded,
+  setAuthenticatedUser,
+} from "@/auth/sessionState";
 import type { CurrentUser } from "@/types";
 
 export const router = createRouter({
@@ -74,9 +80,6 @@ export const router = createRouter({
   ],
 });
 
-let hasAuthenticated = false;
-let authenticatedUser: CurrentUser | undefined;
-
 function logSafePath(fullPath: string): string {
   return fullPath.replace(/([?&]admin-token=)[^&]*/u, "$1***");
 }
@@ -86,11 +89,13 @@ function requiresAdmin(to: RouteLocationNormalized): boolean {
 }
 
 async function ensureAuthenticatedUser(): Promise<CurrentUser> {
-  if (authenticatedUser) {
-    return authenticatedUser;
+  const cachedUser = getAuthenticatedUser();
+  if (cachedUser) {
+    return cachedUser;
   }
-  authenticatedUser = await api.me({ skipUnauthorizedRedirect: true });
-  return authenticatedUser;
+  const currentUser = await api.me({ skipUnauthorizedRedirect: true });
+  setAuthenticatedUser(currentUser);
+  return currentUser;
 }
 
 async function guardAdminRoute(to: RouteLocationNormalized) {
@@ -110,7 +115,7 @@ async function guardAdminRoute(to: RouteLocationNormalized) {
 }
 
 router.beforeEach(async (to) => {
-  if (to.name === "unauthorized" || hasAuthenticated) {
+  if (to.name === "unauthorized" || hasAuthenticationSucceeded()) {
     if (to.name === "unauthorized") {
       console.info("[auth:router] entering 401 page");
       return true;
@@ -133,8 +138,8 @@ router.beforeEach(async (to) => {
   if (adminToken) {
     try {
       console.info("[auth:router] admin token login started", { targetPath });
-      authenticatedUser = await api.adminTokenLogin(adminToken);
-      hasAuthenticated = true;
+      setAuthenticatedUser(await api.adminTokenLogin(adminToken));
+      markAuthenticationSucceeded();
       const query = { ...to.query };
       delete query["admin-token"];
       console.info("[auth:router] admin token login passed", { targetPath });
@@ -150,8 +155,8 @@ router.beforeEach(async (to) => {
   }
 
   try {
-    authenticatedUser = await loadCurrentUserWithDingtalkLogin({ authApi: api });
-    hasAuthenticated = true;
+    setAuthenticatedUser(await loadCurrentUserWithDingtalkLogin({ authApi: api }));
+    markAuthenticationSucceeded();
     console.info("[auth:router] auth guard passed", {
       targetPath,
     });

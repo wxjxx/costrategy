@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { InfoFilled } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
+import { resetAuthenticationState } from "@/auth/sessionState";
 import unauthorizedImage from "@/assets/401.png";
 
 const router = useRouter();
 
 function goHome() {
+  resetAuthenticationState();
   void router.push("/");
 }
 </script>

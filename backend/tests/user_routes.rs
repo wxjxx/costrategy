@@ -8,8 +8,19 @@ use costrategy_backend::users::{MemoryUserRepository, NewUser, UserStatus};
 use serde_json::json;
 
 #[actix_web::test]
-async fn employee_cannot_manage_users() {
+async fn employee_can_list_users_but_cannot_manage_users() {
     let users = MemoryUserRepository::default();
+    let target = users
+        .insert_user(NewUser {
+            dingtalk_user_id: "target".to_string(),
+            union_id: None,
+            name: "目标用户".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Employee,
+            status: UserStatus::Active,
+        })
+        .await;
     users
         .insert_user(NewUser {
             dingtalk_user_id: "employee".to_string(),
@@ -31,17 +42,35 @@ async fn employee_cannot_manage_users() {
     let app = user_test_app(dingtalk, users).await;
     let cookie = login_cookie(&app, "employee-code").await;
 
-    let response = test::call_service(
+    let list_response = test::call_service(
         &app,
         test::TestRequest::get()
             .uri("/api/users")
-            .cookie(cookie)
+            .cookie(cookie.clone())
             .to_request(),
     )
     .await;
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let listed: serde_json::Value = test::read_body_json(list_response).await;
+    assert!(listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|user| user["dingtalk_user_id"] == "target"));
+
+    let role_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri(&format!("/api/users/{}/role", target.id))
+            .cookie(cookie)
+            .set_json(json!({ "role": "manager" }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(role_response.status(), StatusCode::FORBIDDEN);
+    let body: ApiErrorResponse = test::read_body_json(role_response).await;
     assert_eq!(body.error.code, ApiErrorCode::AuthForbidden);
 }
 
