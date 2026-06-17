@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub struct CurrentUser {
     pub id: Uuid,
     pub name: String,
+    pub avatar_url: Option<String>,
     pub role: UserRole,
     pub departments: Vec<String>,
     pub permissions: Vec<&'static str>,
@@ -98,6 +99,7 @@ where
         Ok(CurrentUser {
             id: user.id,
             name: user.name,
+            avatar_url: user.avatar_url,
             role: user.role,
             departments,
             permissions: user.role.permission_codes(),

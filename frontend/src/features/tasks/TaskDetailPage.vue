@@ -5,10 +5,17 @@ import { useQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
 import { Delete, Download, Edit, UploadFilled } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import VueOfficeDocx from "@vue-office/docx";
+import VueOfficeExcel from "@vue-office/excel";
+import VueOfficePdf from "@vue-office/pdf";
+import VueOfficePptx from "@vue-office/pptx";
+import "@vue-office/docx/lib/index.css";
+import "@vue-office/excel/lib/index.css";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import StatusTag from "@/components/StatusTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
+import type { TaskAttachment } from "@/types";
 import {
   getDisplayStatus,
   primaryTaskAssigneeName,
@@ -16,6 +23,7 @@ import {
 } from "@/features/tasks/taskWorkflow";
 import { clampPage, pageRows } from "@/utils/pagination";
 import { activityActionLabel } from "./activityLabels";
+import { attachmentPreviewKind, type AttachmentPreviewKind } from "./attachmentPreview";
 import { renderDescriptionHtml } from "./richText";
 
 const route = useRoute();
@@ -27,6 +35,15 @@ const uploadInput = ref<HTMLInputElement>();
 const previewImageUrl = ref("");
 const attachmentPage = ref(1);
 const attachmentPageSize = ref(10);
+const attachmentPreviewVisible = ref(false);
+const attachmentPreviewLoading = ref(false);
+const attachmentPreview = ref<{
+  id: string;
+  fileName: string;
+  kind: AttachmentPreviewKind;
+  blob?: Blob;
+}>();
+let attachmentPreviewRequestId = 0;
 
 const { data: detail } = useQuery({
   queryKey: ["task-detail", taskId],
@@ -40,6 +57,20 @@ const descriptionHtml = computed(() =>
 const pagedAttachments = computed(() =>
   pageRows(detail.value?.attachments ?? [], attachmentPage.value, attachmentPageSize.value),
 );
+const attachmentPreviewComponent = computed(() => {
+  switch (attachmentPreview.value?.kind) {
+    case "docx":
+      return VueOfficeDocx;
+    case "excel":
+      return VueOfficeExcel;
+    case "pdf":
+      return VueOfficePdf;
+    case "pptx":
+      return VueOfficePptx;
+    default:
+      return undefined;
+  }
+});
 
 watch(
   () => detail.value?.attachments.length ?? 0,
@@ -50,6 +81,14 @@ watch(
 
 watch(attachmentPageSize, () => {
   attachmentPage.value = 1;
+});
+
+watch(attachmentPreviewVisible, (visible) => {
+  if (!visible) {
+    attachmentPreviewRequestId += 1;
+    attachmentPreview.value = undefined;
+    attachmentPreviewLoading.value = false;
+  }
 });
 
 function refreshTaskQueries() {
@@ -108,6 +147,49 @@ async function downloadAttachment(attachmentId: string, fileName: string) {
   } catch {
     ElMessage.error("附件下载失败，请查看后端日志");
   }
+}
+
+async function previewAttachment(attachment: TaskAttachment) {
+  const kind = attachmentPreviewKind(attachment.file_name, attachment.mime_type);
+  if (!kind) {
+    ElMessage.warning("仅支持预览 Word、Excel、PDF、PPT 文件，请下载查看");
+    return;
+  }
+
+  const requestId = attachmentPreviewRequestId + 1;
+  attachmentPreviewRequestId = requestId;
+  attachmentPreview.value = {
+    id: attachment.id,
+    fileName: attachment.file_name,
+    kind,
+  };
+  attachmentPreviewVisible.value = true;
+  attachmentPreviewLoading.value = true;
+
+  try {
+    const blob = await api.downloadTaskAttachment(taskId.value, attachment.id);
+    if (requestId !== attachmentPreviewRequestId) return;
+    attachmentPreview.value = {
+      id: attachment.id,
+      fileName: attachment.file_name,
+      kind,
+      blob,
+    };
+  } catch {
+    if (requestId === attachmentPreviewRequestId) {
+      attachmentPreviewVisible.value = false;
+      ElMessage.error("附件预览失败，请下载查看");
+    }
+  } finally {
+    if (requestId === attachmentPreviewRequestId) {
+      attachmentPreviewLoading.value = false;
+    }
+  }
+}
+
+async function downloadPreviewAttachment() {
+  if (!attachmentPreview.value) return;
+  await downloadAttachment(attachmentPreview.value.id, attachmentPreview.value.fileName);
 }
 
 function selectUploadFile() {
@@ -215,11 +297,21 @@ async function deleteCurrentTask() {
           </div>
           <input ref="uploadInput" class="hidden-file-input" type="file" @change="uploadSelectedFile" />
           <ElTable :data="pagedAttachments" size="small">
-            <ElTableColumn prop="file_name" label="文件名" />
+            <ElTableColumn label="文件名" min-width="220">
+              <template #default="{ row }">
+                <ElButton
+                  class="attachment-name-button"
+                  link
+                  type="primary"
+                  @click="previewAttachment(row)"
+                >
+                  {{ row.file_name }}
+                </ElButton>
+              </template>
+            </ElTableColumn>
             <ElTableColumn label="文件大小" width="120">
               <template #default="{ row }">{{ (row.file_size / 1024 / 1024).toFixed(2) }} MB</template>
             </ElTableColumn>
-            <ElTableColumn prop="mime_type" label="文件类型" width="100" />
             <ElTableColumn prop="uploader_name" label="上传人" width="100" />
             <ElTableColumn prop="created_at" label="上传时间" width="170" />
             <ElTableColumn label="操作" width="120">
@@ -285,5 +377,37 @@ async function deleteCurrentTask() {
       hide-on-click-modal
       @close="previewImageUrl = ''"
     />
+
+    <ElDialog
+      v-model="attachmentPreviewVisible"
+      :title="attachmentPreview?.fileName ?? '附件预览'"
+      width="88vw"
+      top="4vh"
+      destroy-on-close
+      class="attachment-preview-dialog"
+    >
+      <div
+        v-loading="attachmentPreviewLoading"
+        class="attachment-preview-body"
+        element-loading-text="正在加载附件..."
+      >
+        <component
+          :is="attachmentPreviewComponent"
+          v-if="attachmentPreview?.blob && attachmentPreviewComponent"
+          :src="attachmentPreview.blob"
+        />
+      </div>
+      <template #footer>
+        <ElButton
+          v-if="attachmentPreview"
+          :loading="attachmentPreviewLoading"
+          @click="downloadPreviewAttachment"
+        >
+          <ElIcon><Download /></ElIcon>
+          下载
+        </ElButton>
+        <ElButton type="primary" @click="attachmentPreviewVisible = false">关闭</ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>

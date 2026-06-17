@@ -20,7 +20,7 @@ async fn login_sets_session_cookie_and_me_returns_current_user() {
             dingtalk_user_id: "ding-user-1".to_string(),
             union_id: Some("union-1".to_string()),
             name: "张三".to_string(),
-            avatar_url: None,
+            avatar_url: Some("https://example.test/avatar.png".to_string()),
             mobile: None,
             role: UserRole::Employee,
             status: UserStatus::Active,
@@ -84,6 +84,7 @@ async fn login_sets_session_cookie_and_me_returns_current_user() {
     assert_eq!(me_response.status(), StatusCode::OK);
     let body: serde_json::Value = test::read_body_json(me_response).await;
     assert_eq!(body["name"], "张三");
+    assert_eq!(body["avatar_url"], "https://example.test/avatar.png");
     assert_eq!(body["role"], "employee");
     assert_eq!(body["departments"], serde_json::json!(["研发部"]));
     assert!(body["permissions"]
@@ -94,6 +95,56 @@ async fn login_sets_session_cookie_and_me_returns_current_user() {
         .as_array()
         .unwrap()
         .contains(&serde_json::json!("update_own_task_status")));
+}
+
+#[actix_web::test]
+async fn update_my_avatar_persists_and_refreshes_session_user() {
+    let users = MemoryUserRepository::default();
+    users
+        .insert_user(NewUser {
+            dingtalk_user_id: "ding-user-1".to_string(),
+            union_id: None,
+            name: "张三".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Employee,
+            status: UserStatus::Active,
+        })
+        .await;
+    let dingtalk = MockDingTalkClient::default().with_login_identity(
+        "valid-code",
+        DingTalkLoginIdentity {
+            dingtalk_user_id: "ding-user-1".to_string(),
+            union_id: None,
+        },
+    );
+    let app = test_app(dingtalk, users).await;
+    let session_cookie = login_cookie(&app, "valid-code").await;
+
+    let update_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri("/api/me/avatar")
+            .cookie(session_cookie.clone())
+            .set_json(json!({ "avatar_url": "data:image/png;base64,avatar" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(update_response).await;
+    assert_eq!(body["avatar_url"], "data:image/png;base64,avatar");
+
+    let me_response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/me")
+            .cookie(session_cookie)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(me_response.status(), StatusCode::OK);
+    let me_body: serde_json::Value = test::read_body_json(me_response).await;
+    assert_eq!(me_body["avatar_url"], "data:image/png;base64,avatar");
 }
 
 #[actix_web::test]
@@ -152,6 +203,41 @@ async fn admin_token_login_sets_admin_session() {
     assert_eq!(me_response.status(), StatusCode::OK);
     let me_body: serde_json::Value = test::read_body_json(me_response).await;
     assert_eq!(me_body["role"], "admin");
+}
+
+#[actix_web::test]
+async fn admin_token_login_preserves_existing_admin_avatar() {
+    let users = MemoryUserRepository::default();
+    users
+        .insert_user(NewUser {
+            dingtalk_user_id: "__admin_token__".to_string(),
+            union_id: None,
+            name: "系统管理员".to_string(),
+            avatar_url: Some("https://example.test/admin.png".to_string()),
+            mobile: None,
+            role: UserRole::Admin,
+            status: UserStatus::Active,
+        })
+        .await;
+    let app = test_app_with_admin_token(
+        MockDingTalkClient::default(),
+        users,
+        Some("bootstrap-admin-token".to_string()),
+    )
+    .await;
+
+    let login_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/auth/admin-token/login")
+            .set_json(json!({ "token": "bootstrap-admin-token" }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(login_response.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(login_response).await;
+    assert_eq!(body["avatar_url"], "https://example.test/admin.png");
 }
 
 #[actix_web::test]

@@ -203,6 +203,74 @@ button {
   font-size: 22px;
 }
 
+.profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 220px;
+  min-height: 42px;
+  padding: 2px 8px 2px 2px;
+  border: 0;
+  border-radius: 6px;
+  color: #111827;
+  background: transparent;
+  cursor: pointer;
+}
+
+.profile-trigger:hover {
+  background: #f1f6ff;
+}
+
+.profile-trigger strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-avatar-editor {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.profile-avatar-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.avatar-url-field {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  color: #344054;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.avatar-url-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #162033;
+  background: #ffffff;
+  font: inherit;
+}
+
+.avatar-url-input:focus {
+  border-color: var(--primary);
+  outline: 3px solid #dcebff;
+}
+
 .with-badge .notification-badge {
   position: absolute;
   top: -2px;
@@ -343,20 +411,20 @@ button {
 .workbench-tabs {
   display: flex;
   align-items: center;
-  gap: 36px;
-  height: 64px;
-  padding: 0 22px;
+  gap: 28px;
+  height: 50px;
+  padding: 0 18px;
   border-bottom: 1px solid var(--border);
 }
 
 .workbench-tabs button:not(.el-button) {
   position: relative;
-  height: 64px;
+  height: 50px;
   padding: 0 12px;
   border: 0;
   color: #465366;
   background: transparent;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .workbench-tabs button.active {
@@ -594,12 +662,20 @@ button {
 .user-avatar {
   display: inline-grid;
   flex: none;
+  overflow: hidden;
   place-items: center;
   border-radius: 50%;
   color: #ffffff;
   background: linear-gradient(135deg, #0f6bff, #779dff);
   font-size: 14px;
   font-weight: 700;
+}
+
+.user-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .task-table,
@@ -629,6 +705,36 @@ button {
   max-width: 100%;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.attachment-name-button {
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.attachment-preview-dialog {
+  max-width: calc(100vw - 24px);
+}
+
+.attachment-preview-dialog .el-dialog__body {
+  padding: 12px 16px;
+}
+
+.attachment-preview-body {
+  height: min(72vh, 760px);
+  min-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.attachment-preview-body > * {
+  min-height: 100%;
 }
 
 .gantt-shell {
@@ -677,6 +783,53 @@ button {
 .gantt-container {
   height: 510px;
   border: 1px solid var(--border);
+}
+
+.gantt-container .gantt_marker.gantt-today-marker {
+  width: 0;
+  border-left: 2px dashed #ff4d4f;
+  background: transparent;
+  z-index: 4;
+}
+
+.gantt-container .gantt_marker.gantt-today-marker .gantt_marker_content {
+  top: 6px;
+  left: 6px;
+  width: max-content;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  border-radius: 999px;
+  color: #b42318;
+  background: #fff1f0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  box-shadow: 0 2px 8px rgba(255, 77, 79, 0.12);
+  pointer-events: none;
+}
+
+.gantt-task-bar-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  gap: 6px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.gantt-task-avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.gantt-task-bar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-title-card {

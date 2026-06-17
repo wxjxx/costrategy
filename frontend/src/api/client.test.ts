@@ -82,10 +82,30 @@ describe("api client", () => {
     });
   });
 
+  it("updates the current user's avatar through the profile endpoint", async () => {
+    const currentUser = {
+      id: "user-1",
+      name: "张三",
+      avatar_url: "https://example.test/avatar.png",
+      role: "employee" as const,
+      departments: [],
+      permissions: [],
+    };
+    const patch = vi.spyOn(http, "patch").mockResolvedValue({ data: currentUser });
+
+    await expect(
+      api.updateMyAvatar(" https://example.test/avatar.png "),
+    ).resolves.toBe(currentUser);
+
+    expect(patch).toHaveBeenCalledWith("/me/avatar", {
+      avatar_url: "https://example.test/avatar.png",
+    });
+  });
+
   it("sends complete project create and update payloads to backend routes", async () => {
     const project = {
       id: "project-1",
-      code: "PRJ-001",
+      code: "project-1",
       name: "项目管理系统",
       owner_id: "user-1",
       description: "内部协作系统",
@@ -98,7 +118,6 @@ describe("api client", () => {
 
     await expect(
       api.createProject({
-        code: "PRJ-001",
         name: "项目管理系统",
         owner_id: "user-1",
         description: "内部协作系统",
@@ -119,7 +138,6 @@ describe("api client", () => {
     ).resolves.toBe(project);
 
     expect(post).toHaveBeenCalledWith("/projects", {
-      code: "PRJ-001",
       name: "项目管理系统",
       owner_id: "user-1",
       description: "内部协作系统",

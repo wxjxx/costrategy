@@ -88,6 +88,12 @@ export function buildTaskQueryParams(filters: TaskFilters): URLSearchParams {
 export const api = {
   me: async (options: RequestOptions = {}): Promise<CurrentUser> =>
     (await http.get("/me", options)).data,
+  updateMyAvatar: async (avatarUrl: string): Promise<CurrentUser> =>
+    (
+      await http.patch("/me/avatar", {
+        avatar_url: avatarUrl.trim() || null,
+      })
+    ).data,
   dingtalkLogin: async (code: string): Promise<CurrentUser> =>
     (await http.post("/auth/dingtalk/login", { code })).data,
   adminTokenLogin: async (token: string): Promise<CurrentUser> =>

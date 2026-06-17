@@ -19,7 +19,6 @@ const pageSize = ref(10);
 const dialogVisible = ref(false);
 const editingProjectId = ref("");
 const projectForm = reactive<CreateProjectPayload>({
-  code: "",
   name: "",
   owner_id: undefined,
   description: "",
@@ -117,7 +116,6 @@ async function deleteProject(project: Project) {
 
 function openProjectDialog(project?: Project) {
   editingProjectId.value = project?.id ?? "";
-  projectForm.code = project?.code ?? "";
   projectForm.name = project?.name ?? "";
   projectForm.owner_id = project?.owner_id;
   projectForm.description = project?.description ?? "";
@@ -181,7 +179,6 @@ function openProjectDialog(project?: Project) {
         <ElTableColumn label="项目名称" min-width="260">
           <template #default="{ row }">
             <strong>{{ row.name }}</strong>
-            <p>{{ row.code }}</p>
           </template>
         </ElTableColumn>
         <ElTableColumn label="项目负责人" width="180">
@@ -220,9 +217,6 @@ function openProjectDialog(project?: Project) {
 
     <ElDialog v-model="dialogVisible" :title="editingProjectId ? '编辑项目' : '新建项目'" width="600" class="form-dialog">
       <ElForm label-width="98px">
-        <ElFormItem label="项目编号" required>
-          <ElInput v-model="projectForm.code" :disabled="Boolean(editingProjectId)" />
-        </ElFormItem>
         <ElFormItem label="项目名称" required><ElInput v-model="projectForm.name" /></ElFormItem>
         <ElFormItem label="项目负责人" required>
           <ElSelect v-model="projectForm.owner_id" clearable>

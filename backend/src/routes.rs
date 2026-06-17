@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const MAX_ATTACHMENT_SIZE: usize = 20 * 1024 * 1024;
+const MAX_AVATAR_URL_LENGTH: usize = 700_000;
 
 pub fn configure(config: &mut web::ServiceConfig) {
     config.service(health);
@@ -48,6 +49,7 @@ where
         )
         .route("/api/auth/logout", web::post().to(logout::<C, R>))
         .route("/api/me", web::get().to(me::<C, R>))
+        .route("/api/me/avatar", web::patch().to(update_my_avatar::<C, R>))
         .route(
             "/api/dingtalk/sync",
             web::post().to(sync_dingtalk_contacts::<C, R>),
@@ -224,6 +226,11 @@ struct AdminTokenLoginRequest {
     token: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct UpdateMyAvatarRequest {
+    avatar_url: Option<String>,
+}
+
 async fn login<C, R>(
     state: web::Data<AppState<C, R>>,
     payload: web::Json<DingtalkLoginRequest>,
@@ -280,13 +287,22 @@ where
     }
 
     log::info!("admin token auth route: token accepted, creating bootstrap admin session");
+    let admin_dingtalk_user_id = "__admin_token__";
+    let existing_admin = state
+        .users
+        .find_by_dingtalk_user_id(admin_dingtalk_user_id)
+        .await
+        .map_err(|error| {
+            log::error!("admin token auth route: failed to load existing bootstrap admin: {error}");
+            AppError::internal(ApiErrorCode::DatabaseError)
+        })?;
     state
         .users
         .upsert_synced_user(NewUser {
-            dingtalk_user_id: "__admin_token__".to_string(),
+            dingtalk_user_id: admin_dingtalk_user_id.to_string(),
             union_id: None,
             name: "系统管理员".to_string(),
-            avatar_url: None,
+            avatar_url: existing_admin.and_then(|user| user.avatar_url),
             mobile: None,
             role: crate::auth::UserRole::Admin,
             status: UserStatus::Active,
@@ -299,7 +315,7 @@ where
 
     let user = state
         .users
-        .find_by_dingtalk_user_id("__admin_token__")
+        .find_by_dingtalk_user_id(admin_dingtalk_user_id)
         .await
         .map_err(|error| {
             log::error!("admin token auth route: failed to load bootstrap admin: {error}");
@@ -309,6 +325,7 @@ where
     let current_user = CurrentUser {
         id: user.id,
         name: user.name,
+        avatar_url: user.avatar_url,
         role: user.role,
         departments: Vec::new(),
         permissions: user.role.permission_codes(),
@@ -369,6 +386,45 @@ where
 {
     let current_user = require_current_user(&state, &request)?;
     Ok(HttpResponse::Ok().json(current_user))
+}
+
+async fn update_my_avatar<C, R>(
+    state: web::Data<AppState<C, R>>,
+    request: HttpRequest,
+    payload: web::Json<UpdateMyAvatarRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+{
+    let current_user = require_current_user(&state, &request)?;
+    let avatar_url = normalize_avatar_url(payload.avatar_url.as_deref())?;
+    let user = state
+        .users
+        .update_user_avatar(current_user.id, avatar_url)
+        .await
+        .map_err(user_error_to_app)?;
+    let departments = state
+        .users
+        .list_user_departments(user.id)
+        .await
+        .map_err(user_error_to_app)?;
+    let refreshed_user = CurrentUser {
+        id: user.id,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        role: user.role,
+        departments,
+        permissions: user.role.permission_codes(),
+    };
+
+    if let Some(cookie) = request.cookie(SESSION_COOKIE_NAME) {
+        let _ = state
+            .sessions
+            .replace(cookie.value(), refreshed_user.clone());
+    }
+
+    Ok(HttpResponse::Ok().json(refreshed_user))
 }
 
 async fn sync_dingtalk_contacts<C, R>(
@@ -455,9 +511,30 @@ where
     })
 }
 
+fn normalize_avatar_url(avatar_url: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(raw_avatar_url) = avatar_url else {
+        return Ok(None);
+    };
+    let avatar_url = raw_avatar_url.trim();
+    if avatar_url.is_empty() {
+        return Ok(None);
+    }
+    if avatar_url.len() > MAX_AVATAR_URL_LENGTH {
+        return Err(AppError::bad_request(ApiErrorCode::ValidationFailed));
+    }
+    if avatar_url.starts_with("https://")
+        || avatar_url.starts_with("http://")
+        || avatar_url.starts_with("data:image/")
+    {
+        return Ok(Some(avatar_url.to_string()));
+    }
+
+    Err(AppError::bad_request(ApiErrorCode::ValidationFailed))
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct CreateProjectRequest {
-    code: String,
+    code: Option<String>,
     name: String,
     owner_id: Option<Uuid>,
     description: Option<String>,
@@ -649,7 +726,12 @@ where
     Ok(HttpResponse::Ok().json(
         projects
             .create_project(CreateProject {
-                code: payload.code.trim().to_string(),
+                code: payload
+                    .code
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|code| !code.is_empty())
+                    .map(str::to_string),
                 name: payload.name.trim().to_string(),
                 owner_id: payload.owner_id,
                 description: payload.description.clone(),

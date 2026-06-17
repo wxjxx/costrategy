@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { Task } from "@/types";
 import {
   buildGanttTasks,
+  buildGanttTimelineRange,
+  calculateCenteredTimelineScrollX,
+  defaultGanttScaleMode,
+  formatGanttBarContent,
+  formatGanttTodayMarkerText,
   formatGanttTooltip,
+  shouldToggleProjectRowFromClick,
+  shouldUseDefaultGanttClick,
   taskDetailPathFromGanttTask,
 } from "./taskGantt";
 
@@ -36,6 +43,59 @@ describe("taskGantt", () => {
       assigneeText: "李四",
     });
     expect(formatGanttTooltip(ganttTask!)).toContain("负责人：李四");
+  });
+
+  it("defaults the timeline scale to day view", () => {
+    expect(defaultGanttScaleMode).toBe("按天");
+  });
+
+  it("formats a current-date marker label for the gantt timeline", () => {
+    expect(formatGanttTodayMarkerText(new Date(2026, 5, 17))).toBe(
+      "今天 06月17日",
+    );
+  });
+
+  it("adds enough date range padding for centering today in the timeline", () => {
+    const range = buildGanttTimelineRange(
+      [{ ...task, start_date: "2026-05-01", due_date: "2026-05-03" }],
+      new Date(2026, 5, 17),
+    );
+
+    expect(range.start_date).toEqual(new Date(2026, 3, 3));
+    expect(range.end_date).toEqual(new Date(2026, 6, 15));
+  });
+
+  it("calculates horizontal scroll so the current date is centered", () => {
+    expect(calculateCenteredTimelineScrollX(700, 300)).toBe(550);
+    expect(calculateCenteredTimelineScrollX(80, 300)).toBe(0);
+  });
+
+  it("lets project row clicks use the gantt default behavior for expand and collapse", () => {
+    const ganttTasks = buildGanttTasks([task], "project");
+    const projectRow = ganttTasks.find((item) => item.id === "project-project-1");
+    const taskRow = ganttTasks.find((item) => item.id === task.id);
+
+    expect(shouldUseDefaultGanttClick(projectRow!)).toBe(true);
+    expect(shouldUseDefaultGanttClick(taskRow!)).toBe(false);
+  });
+
+  it("toggles project rows when users click the row cell instead of the tree icon", () => {
+    const ganttTasks = buildGanttTasks([task], "project");
+    const projectRow = ganttTasks.find((item) => item.id === "project-project-1");
+    const taskRow = ganttTasks.find((item) => item.id === task.id);
+
+    expect(shouldToggleProjectRowFromClick(projectRow!, false)).toBe(true);
+    expect(shouldToggleProjectRowFromClick(projectRow!, true)).toBe(false);
+    expect(shouldToggleProjectRowFromClick(taskRow!, false)).toBe(false);
+  });
+
+  it("renders a compact assignee avatar inside gantt bars", () => {
+    const ganttTasks = buildGanttTasks([task], "project");
+    const ganttTask = ganttTasks.find((item) => item.id === task.id);
+
+    expect(formatGanttBarContent(ganttTask!)).toContain("gantt-task-avatar");
+    expect(formatGanttBarContent(ganttTask!)).toContain("李");
+    expect(formatGanttBarContent(ganttTask!)).toContain("绘制甘特图");
   });
 
   it("adds overdue marker to overdue task titles without changing bar color to red", () => {

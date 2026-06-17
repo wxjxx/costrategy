@@ -28,7 +28,7 @@ pub struct Project {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateProject {
-    pub code: String,
+    pub code: Option<String>,
     pub name: String,
     pub owner_id: Option<Uuid>,
     pub description: Option<String>,
@@ -94,9 +94,10 @@ impl ProjectRepository for MemoryProjectRepository {
         &self,
         project: CreateProject,
     ) -> Result<Project, ProjectRepositoryError> {
+        let id = Uuid::new_v4();
         let stored = Project {
-            id: Uuid::new_v4(),
-            code: project.code,
+            id,
+            code: project.code.unwrap_or_else(|| id.to_string()),
             name: project.name,
             owner_id: project.owner_id,
             description: project.description,
@@ -176,6 +177,8 @@ impl ProjectRepository for SqlxProjectRepository {
         &self,
         project: CreateProject,
     ) -> Result<Project, ProjectRepositoryError> {
+        let id = Uuid::new_v4();
+        let code = project.code.unwrap_or_else(|| id.to_string());
         let row = sqlx::query(
             "insert into projects (
                 id, code, name, owner_id, description, start_date, end_date, status, updated_at
@@ -183,8 +186,8 @@ impl ProjectRepository for SqlxProjectRepository {
              values ($1, $2, $3, $4, $5, $6, $7, $8, now())
              returning id, code, name, owner_id, description, start_date, end_date, status",
         )
-        .bind(Uuid::new_v4())
-        .bind(project.code)
+        .bind(id)
+        .bind(code)
         .bind(project.name)
         .bind(project.owner_id)
         .bind(project.description)

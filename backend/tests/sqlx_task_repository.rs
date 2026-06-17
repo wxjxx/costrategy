@@ -66,7 +66,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
         .unwrap();
     let project = projects
         .create_project(CreateProject {
-            code: project_code.clone(),
+            code: Some(project_code.clone()),
             name: "任务测试项目".to_string(),
             owner_id: Some(manager.id),
             description: None,

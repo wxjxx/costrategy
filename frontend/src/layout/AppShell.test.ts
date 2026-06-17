@@ -7,11 +7,15 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   markMyNotificationRead: vi.fn(),
   refetchNotifications: vi.fn(),
+  updateMyAvatar: vi.fn(),
+  setQueryData: vi.fn(),
+  invalidateQueries: vi.fn(),
 }));
 
 const currentUser = {
   id: "user-1",
   name: "员工",
+  avatar_url: "https://example.test/current.png",
   role: "employee" as const,
   departments: [],
   permissions: [],
@@ -54,6 +58,14 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("@tanstack/vue-query", () => ({
+  useMutation: vi.fn(({ mutationFn, onSuccess }) => ({
+    isPending: ref(false),
+    mutateAsync: vi.fn(async (payload: unknown) => {
+      const result = await mutationFn(payload);
+      await onSuccess?.(result);
+      return result;
+    }),
+  })),
   useQuery: vi.fn(({ queryKey }) => {
     if (queryKey[0] === "me") return { data: ref(currentUser) };
     if (queryKey[0] === "my-notifications") {
@@ -61,6 +73,10 @@ vi.mock("@tanstack/vue-query", () => ({
     }
     return { data: ref([]) };
   }),
+  useQueryClient: vi.fn(() => ({
+    setQueryData: mocks.setQueryData,
+    invalidateQueries: mocks.invalidateQueries,
+  })),
 }));
 
 vi.mock("@/api/client", () => ({
@@ -68,6 +84,7 @@ vi.mock("@/api/client", () => ({
     me: vi.fn(),
     myNotifications: vi.fn(),
     markMyNotificationRead: mocks.markMyNotificationRead,
+    updateMyAvatar: mocks.updateMyAvatar,
   },
 }));
 
@@ -80,19 +97,39 @@ describe("AppShell notifications", () => {
     mocks.push.mockClear();
     mocks.markMyNotificationRead.mockReset().mockResolvedValue(notifications[0]);
     mocks.refetchNotifications.mockClear();
+    mocks.updateMyAvatar.mockReset().mockResolvedValue({
+      ...currentUser,
+      avatar_url: "https://example.test/new.png",
+    });
+    mocks.setQueryData.mockClear();
+    mocks.invalidateQueries.mockClear();
   });
 
-  it("shows current user notifications split by unread and read, then opens task detail", async () => {
-    const wrapper = mount(AppShell, {
+  function mountShell() {
+    return mount(AppShell, {
       global: {
         stubs: {
+          ElButton: { template: "<button><slot /></button>" },
+          ElDialog: {
+            props: ["modelValue", "title"],
+            template:
+              "<section v-if='modelValue' class='profile-dialog'><h2>{{ title }}</h2><slot /><slot name='footer' /></section>",
+          },
           ElIcon: { template: "<span><slot /></span>" },
           RouterLink: { template: "<a><slot /></a>" },
           RouterView: { template: "<section />" },
-          UserAvatar: { template: "<span />" },
+          UserAvatar: {
+            props: ["name", "src", "size"],
+            template:
+              "<span class='user-avatar-stub' :data-src='src' :data-size='size'>{{ name }}</span>",
+          },
         },
       },
     });
+  }
+
+  it("shows current user notifications split by unread and read, then opens task detail", async () => {
+    const wrapper = mountShell();
 
     await wrapper.get(".notification-trigger").trigger("click");
 
@@ -117,32 +154,14 @@ describe("AppShell notifications", () => {
   });
 
   it("does not render a chevron next to the current user name", () => {
-    const wrapper = mount(AppShell, {
-      global: {
-        stubs: {
-          ElIcon: { template: "<span><slot /></span>" },
-          RouterLink: { template: "<a><slot /></a>" },
-          RouterView: { template: "<section />" },
-          UserAvatar: { template: "<span />" },
-        },
-      },
-    });
+    const wrapper = mountShell();
 
     expect(wrapper.find(".chevron").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("⌄");
   });
 
   it("toggles the sidebar collapsed state from the collapse menu button", async () => {
-    const wrapper = mount(AppShell, {
-      global: {
-        stubs: {
-          ElIcon: { template: "<span><slot /></span>" },
-          RouterLink: { template: "<a><slot /></a>" },
-          RouterView: { template: "<section />" },
-          UserAvatar: { template: "<span />" },
-        },
-      },
-    });
+    const wrapper = mountShell();
 
     expect(wrapper.classes()).not.toContain("sidebar-collapsed");
 
@@ -150,5 +169,31 @@ describe("AppShell notifications", () => {
 
     expect(wrapper.classes()).toContain("sidebar-collapsed");
     expect(wrapper.get(".collapse-button").text()).toContain("展开菜单");
+  });
+
+  it("opens profile avatar management from the header user avatar and saves edits", async () => {
+    const wrapper = mountShell();
+
+    await wrapper.get(".profile-trigger").trigger("click");
+
+    expect(wrapper.text()).toContain("个人头像管理");
+    expect(wrapper.get<HTMLInputElement>(".avatar-url-input").element.value).toBe(
+      "https://example.test/current.png",
+    );
+
+    await wrapper
+      .get(".avatar-url-input")
+      .setValue("https://example.test/new.png");
+    await wrapper.get(".profile-avatar-save").trigger("click");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocks.updateMyAvatar).toHaveBeenCalledWith(
+      "https://example.test/new.png",
+    );
+    expect(mocks.setQueryData).toHaveBeenCalledWith(["me"], {
+      ...currentUser,
+      avatar_url: "https://example.test/new.png",
+    });
   });
 });

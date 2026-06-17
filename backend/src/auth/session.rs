@@ -28,6 +28,15 @@ impl SessionStore {
             .cloned()
     }
 
+    pub fn replace(&self, token: &str, user: CurrentUser) -> Option<CurrentUser> {
+        let mut sessions = self.sessions.lock().expect("session store lock");
+        if !sessions.contains_key(token) {
+            return None;
+        }
+
+        sessions.insert(token.to_string(), user)
+    }
+
     pub fn remove(&self, token: &str) -> Option<CurrentUser> {
         self.sessions
             .lock()

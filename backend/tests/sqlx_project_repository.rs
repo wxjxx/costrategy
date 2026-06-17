@@ -41,7 +41,7 @@ async fn sqlx_project_repository_crud_and_archive() {
 
     let created = repo
         .create_project(CreateProject {
-            code: code.clone(),
+            code: Some(code.clone()),
             name: "测试项目".to_string(),
             owner_id: Some(owner.id),
             description: Some("创建描述".to_string()),

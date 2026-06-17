@@ -672,7 +672,7 @@ impl TaskRouteFixture {
         let projects = MemoryProjectRepository::default();
         let project = projects
             .create_project(CreateProject {
-                code: "PM-001".to_string(),
+                code: Some("PM-001".to_string()),
                 name: "项目管理系统".to_string(),
                 owner_id: None,
                 description: None,

@@ -137,6 +137,12 @@ pub trait UserRepository: Clone + Send + Sync + 'static {
         id: Uuid,
         status: UserStatus,
     ) -> Result<User, UserRepositoryError>;
+
+    async fn update_user_avatar(
+        &self,
+        id: Uuid,
+        avatar_url: Option<String>,
+    ) -> Result<User, UserRepositoryError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -460,6 +466,24 @@ impl UserRepository for MemoryUserRepository {
         };
 
         user.status = status;
+        Ok(user.clone())
+    }
+
+    async fn update_user_avatar(
+        &self,
+        id: Uuid,
+        avatar_url: Option<String>,
+    ) -> Result<User, UserRepositoryError> {
+        let mut state = self.inner.lock().expect("memory repository lock");
+        let Some(user) = state
+            .users_by_dingtalk_id
+            .values_mut()
+            .find(|user| user.id == id)
+        else {
+            return Err(UserRepositoryError::NotFound);
+        };
+
+        user.avatar_url = avatar_url;
         Ok(user.clone())
     }
 }
@@ -801,6 +825,27 @@ impl UserRepository for SqlxUserRepository {
         )
         .bind(id)
         .bind(status.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| UserRepositoryError::Database)?;
+
+        row.map(row_to_user)
+            .transpose()?
+            .ok_or(UserRepositoryError::NotFound)
+    }
+
+    async fn update_user_avatar(
+        &self,
+        id: Uuid,
+        avatar_url: Option<String>,
+    ) -> Result<User, UserRepositoryError> {
+        let row = sqlx::query(
+            "update users set avatar_url = $2, updated_at = now()
+             where id = $1
+             returning id, dingtalk_user_id, union_id, name, avatar_url, mobile, role, status",
+        )
+        .bind(id)
+        .bind(avatar_url)
         .fetch_optional(&self.pool)
         .await
         .map_err(|_| UserRepositoryError::Database)?;

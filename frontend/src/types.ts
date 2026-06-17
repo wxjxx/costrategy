@@ -8,6 +8,7 @@ export type ProjectStatus = "active" | "archived" | "completed" | "paused";
 export interface CurrentUser {
   id: string;
   name: string;
+  avatar_url?: string;
   role: UserRole;
   departments: string[];
   permissions: string[];
@@ -38,7 +39,6 @@ export interface Project {
 }
 
 export interface CreateProjectPayload {
-  code: string;
   name: string;
   description?: string;
   owner_id?: string;

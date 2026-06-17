@@ -80,6 +80,9 @@ fn paths() -> Value {
         "/api/me": {
             "get": secured_operation("Auth", "获取当前用户", "返回当前登录用户、角色和权限点", Value::Null, response_ref("CurrentUser"))
         },
+        "/api/me/avatar": {
+            "patch": secured_operation("Auth", "更新个人头像", "当前用户更新个人头像地址", json_ref_body("UpdateMyAvatarRequest"), response_ref("CurrentUser"))
+        },
         "/api/dingtalk/sync": {
             "post": secured_operation("DingTalk", "同步钉钉通讯录", "系统管理员手动同步钉钉部门和用户", Value::Null, response_ref("DingtalkSyncResult"))
         },
@@ -303,9 +306,13 @@ fn components() -> Value {
             "CurrentUser": object_schema(vec![
                 required_prop("id", uuid_schema()),
                 required_prop("name", string_schema()),
+                optional_prop("avatar_url", string_schema()),
                 required_prop("role", enum_schema(vec!["employee", "manager", "admin"])),
                 required_prop("departments", json!({ "type": "array", "items": string_schema() })),
                 required_prop("permissions", json!({ "type": "array", "items": string_schema() }))
+            ]),
+            "UpdateMyAvatarRequest": object_schema(vec![
+                optional_prop("avatar_url", string_schema())
             ]),
             "DingtalkSyncResult": object_schema(vec![
                 required_prop("synced_departments", integer_schema()),

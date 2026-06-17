@@ -155,6 +155,55 @@ async fn manager_can_create_update_list_and_archive_project() {
 }
 
 #[actix_web::test]
+async fn manager_can_create_project_without_legacy_code() {
+    let users = MemoryUserRepository::default();
+    let manager = users
+        .insert_user(NewUser {
+            dingtalk_user_id: "manager".to_string(),
+            union_id: None,
+            name: "管理人员".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Manager,
+            status: UserStatus::Active,
+        })
+        .await;
+    let dingtalk = MockDingTalkClient::default().with_login_identity(
+        "manager-code",
+        DingTalkLoginIdentity {
+            dingtalk_user_id: "manager".to_string(),
+            union_id: None,
+        },
+    );
+    let app = project_test_app(dingtalk, users).await;
+    let cookie = login_cookie(&app, "manager-code").await;
+
+    let create_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/projects")
+            .cookie(cookie)
+            .set_json(json!({
+                "name": "自动编号项目",
+                "description": "新客户端不再提交项目编号",
+                "owner_id": manager.id,
+                "start_date": "2026-06-01",
+                "end_date": "2026-08-01",
+                "status": "active"
+            }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let created: serde_json::Value = test::read_body_json(create_response).await;
+    let project_id = created["id"].as_str().unwrap();
+    uuid::Uuid::parse_str(project_id).unwrap();
+    assert_eq!(created["code"], project_id);
+    assert_eq!(created["name"], "自动编号项目");
+}
+
+#[actix_web::test]
 async fn only_admin_can_delete_project() {
     let users = MemoryUserRepository::default();
     let manager = users
