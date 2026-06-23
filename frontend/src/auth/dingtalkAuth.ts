@@ -6,10 +6,27 @@ type DingtalkAuthCodeRequest = (options: {
   corpId: string;
   success?: (result: DingtalkAuthCodeResult) => void;
   fail?: (error: unknown) => void;
+  onSuccess?: (result: DingtalkAuthCodeResult) => void;
+  onFail?: (error: unknown) => void;
 }) => void | Promise<DingtalkAuthCodeResult>;
 
 export interface DingtalkJsApi {
-  requestAuthCode: DingtalkAuthCodeRequest;
+  requestAuthCode?: DingtalkAuthCodeRequest;
+  runtime?: {
+    permission?: {
+      requestAuthCode?: DingtalkAuthCodeRequest;
+    };
+  };
+  biz?: {
+    auth?: {
+      requestAuthCode?: DingtalkAuthCodeRequest;
+    };
+  };
+  channel?: {
+    permission?: {
+      requestAuthCode?: DingtalkAuthCodeRequest;
+    };
+  };
 }
 
 interface DingtalkWindow extends Window {
@@ -149,6 +166,101 @@ export function isUnauthorizedError(error: unknown): boolean {
   );
 }
 
+function authCodeCandidates(dd: DingtalkJsApi): Array<{
+  name: string;
+  request: DingtalkAuthCodeRequest;
+}> {
+  return [
+    { name: "requestAuthCode", request: dd.requestAuthCode },
+    {
+      name: "runtime.permission.requestAuthCode",
+      request: dd.runtime?.permission?.requestAuthCode,
+    },
+    { name: "biz.auth.requestAuthCode", request: dd.biz?.auth?.requestAuthCode },
+    {
+      name: "channel.permission.requestAuthCode",
+      request: dd.channel?.permission?.requestAuthCode,
+    },
+  ].filter(
+    (candidate): candidate is { name: string; request: DingtalkAuthCodeRequest } =>
+      typeof candidate.request === "function",
+  );
+}
+
+function extractDingtalkAuthCode(result: DingtalkAuthCodeResult): string | undefined {
+  return result.code ?? result.authCode;
+}
+
+function requestAuthCodeWithCandidate(
+  candidate: { name: string; request: DingtalkAuthCodeRequest },
+  params: { clientId: string; corpId: string },
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(
+        new DingtalkAuthError(
+          "DINGTALK_AUTH_CODE_TIMEOUT",
+          "获取钉钉免登授权码超时",
+          { apiName: candidate.name },
+        ),
+      );
+    }, 10_000);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      callback();
+    };
+    const onSuccess = (result: DingtalkAuthCodeResult) => {
+      const code = extractDingtalkAuthCode(result);
+      if (code) {
+        finish(() => resolve(code));
+        return;
+      }
+      finish(() =>
+        reject(
+          new DingtalkAuthError(
+            "DINGTALK_AUTH_CODE_EMPTY",
+            "钉钉免登未返回授权码",
+            { apiName: candidate.name, result },
+          ),
+        ),
+      );
+    };
+    const onFail = (error: unknown) => {
+      finish(() =>
+        reject(
+          new DingtalkAuthError(
+            "DINGTALK_AUTH_CODE_FAILED",
+            "获取钉钉免登授权码失败",
+            { apiName: candidate.name, error },
+          ),
+        ),
+      );
+    };
+
+    try {
+      const result = candidate.request({
+        clientId: params.clientId,
+        corpId: params.corpId,
+        success: onSuccess,
+        fail: onFail,
+        onSuccess,
+        onFail,
+      });
+
+      if (result && "then" in result) {
+        result.then(onSuccess).catch(onFail);
+      }
+    } catch (error) {
+      onFail(error);
+    }
+  });
+}
+
 export async function requestDingtalkAuthCode(options: {
   dd?: DingtalkJsApi;
   loadDd?: () => Promise<DingtalkJsApi | undefined>;
@@ -162,8 +274,9 @@ export async function requestDingtalkAuthCode(options: {
   const locationSearch = options.locationSearch ?? getCurrentSearch();
   const clientId = resolveDingtalkClientId(locationSearch);
   const corpId = resolveDingtalkCorpId(locationSearch);
+  const candidates = dd ? authCodeCandidates(dd) : [];
 
-  if (!dd?.requestAuthCode) {
+  if (!dd || candidates.length === 0) {
     console.warn("[auth:dingtalk] DingTalk JSAPI is missing");
     throw new DingtalkAuthError("DINGTALK_JSAPI_MISSING", "当前环境不支持钉钉免登");
   }
@@ -178,58 +291,35 @@ export async function requestDingtalkAuthCode(options: {
 
   console.info("[auth:dingtalk] requesting DingTalk auth code", {
     hasClientId: true,
-    apiName: "requestAuthCode",
+    apiNames: candidates.map((candidate) => candidate.name),
   });
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const onSuccess = (result: DingtalkAuthCodeResult) => {
-      if (settled) {
-        return;
-      }
-      const code = result.code ?? result.authCode;
-      if (code) {
-        settled = true;
-        console.info("[auth:dingtalk] DingTalk auth code received");
-        resolve(code);
-        return;
-      }
-      settled = true;
-      console.warn("[auth:dingtalk] DingTalk auth code response is empty", result);
-      reject(
-        new DingtalkAuthError(
-          "DINGTALK_AUTH_CODE_EMPTY",
-          "钉钉免登未返回授权码",
-          result,
-        ),
-      );
-    };
-    const onFail = (error: unknown) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      console.error("[auth:dingtalk] DingTalk auth code request failed", error);
-      reject(
-        new DingtalkAuthError(
-          "DINGTALK_AUTH_CODE_FAILED",
-          "获取钉钉免登授权码失败",
-          error,
-        ),
-      );
-    };
-
-    const result = dd.requestAuthCode({
-      clientId,
-      corpId,
-      success: onSuccess,
-      fail: onFail,
-    });
-
-    if (result && "then" in result) {
-      result.then(onSuccess).catch(onFail);
+  const errors: unknown[] = [];
+  for (const candidate of candidates) {
+    try {
+      const code = await requestAuthCodeWithCandidate(candidate, { clientId, corpId });
+      console.info("[auth:dingtalk] DingTalk auth code received", {
+        apiName: candidate.name,
+      });
+      return code;
+    } catch (error) {
+      errors.push(error);
+      console.warn("[auth:dingtalk] DingTalk auth code candidate failed", {
+        apiName: candidate.name,
+        error: getErrorLogPayload(error),
+      });
     }
+  }
+
+  console.error("[auth:dingtalk] all DingTalk auth code candidates failed", {
+    apiNames: candidates.map((candidate) => candidate.name),
+    errors: errors.map(getErrorLogPayload),
   });
+  throw new DingtalkAuthError(
+    "DINGTALK_AUTH_CODE_FAILED",
+    "获取钉钉免登授权码失败",
+    { apiNames: candidates.map((candidate) => candidate.name), errors },
+  );
 }
 
 export async function loadCurrentUserWithDingtalkLogin(options: {

@@ -57,6 +57,52 @@ describe("dingtalk auth", () => {
     );
   });
 
+  it("falls back to runtime permission auth code API when the top-level API fails", async () => {
+    const requestAuthCode = vi.fn().mockRejectedValue({ message: "not supported" });
+    const runtimeRequestAuthCode = vi.fn().mockResolvedValue({ code: "runtime-code-1" });
+
+    await expect(
+      requestDingtalkAuthCode({
+        locationSearch: "?clientId=client-id-1&corpid=ding-corp-1",
+        dd: {
+          requestAuthCode,
+          runtime: {
+            permission: {
+              requestAuthCode: runtimeRequestAuthCode,
+            },
+          },
+        },
+      }),
+    ).resolves.toBe("runtime-code-1");
+
+    expect(requestAuthCode).toHaveBeenCalled();
+    expect(runtimeRequestAuthCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "client-id-1",
+        corpId: "ding-corp-1",
+      }),
+    );
+  });
+
+  it("supports onSuccess callbacks from DingTalk auth code APIs", async () => {
+    const requestAuthCode = vi.fn((options) => {
+      options.onSuccess({ authCode: "auth-code-from-on-success" });
+    });
+
+    await expect(
+      requestDingtalkAuthCode({
+        locationSearch: "?clientId=client-id-1&corpid=ding-corp-1",
+        dd: {
+          runtime: {
+            permission: {
+              requestAuthCode,
+            },
+          },
+        },
+      }),
+    ).resolves.toBe("auth-code-from-on-success");
+  });
+
   it("loads the DingTalk JSAPI package when window.dd is unavailable", async () => {
     const requestAuthCode = vi.fn().mockResolvedValue({ code: "auth-code-from-package" });
 
