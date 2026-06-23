@@ -68,7 +68,7 @@ function getCurrentSearch(): string {
 function getLaunchParamStorage(): Storage | undefined {
   if (typeof window === "undefined") return undefined;
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return undefined;
   }
@@ -96,6 +96,22 @@ function cacheDingtalkLaunchParams(params: DingtalkLaunchParams) {
   const storage = getLaunchParamStorage();
   if (!storage) return;
   storage.setItem(DINGTALK_LAUNCH_PARAMS_STORAGE_KEY, JSON.stringify(params));
+}
+
+export function cacheDingtalkLaunchParamsFromSearch(
+  locationSearch = getCurrentSearch(),
+): DingtalkLaunchParams {
+  const params = new URLSearchParams(locationSearch);
+  const clientId = params.get("clientId") || undefined;
+  const corpId = params.get("corpid") || params.get("corpId") || undefined;
+  const cached = readCachedDingtalkLaunchParams();
+  const nextParams = {
+    clientId: clientId ?? cached.clientId,
+    corpId: corpId ?? cached.corpId,
+  };
+
+  cacheDingtalkLaunchParams(nextParams);
+  return nextParams;
 }
 
 function getDingtalkJsApi(): DingtalkJsApi | undefined {
@@ -127,29 +143,11 @@ function getErrorLogPayload(error: unknown): Record<string, unknown> {
 }
 
 export function resolveDingtalkClientId(locationSearch = getCurrentSearch()): string | undefined {
-  const params = new URLSearchParams(locationSearch);
-  const clientId = params.get("clientId");
-  if (clientId) {
-    cacheDingtalkLaunchParams({
-      ...readCachedDingtalkLaunchParams(),
-      clientId,
-    });
-    return clientId;
-  }
-  return readCachedDingtalkLaunchParams().clientId;
+  return cacheDingtalkLaunchParamsFromSearch(locationSearch).clientId;
 }
 
 export function resolveDingtalkCorpId(locationSearch = getCurrentSearch()): string | undefined {
-  const params = new URLSearchParams(locationSearch);
-  const corpId = params.get("corpid");
-  if (corpId) {
-    cacheDingtalkLaunchParams({
-      ...readCachedDingtalkLaunchParams(),
-      corpId,
-    });
-    return corpId;
-  }
-  return readCachedDingtalkLaunchParams().corpId;
+  return cacheDingtalkLaunchParamsFromSearch(locationSearch).corpId;
 }
 
 export function resolveAdminToken(locationSearch = getCurrentSearch()): string | undefined {

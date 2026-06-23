@@ -10,7 +10,11 @@ import TaskFormPage from "@/features/tasks/TaskFormPage.vue";
 import UnauthorizedPage from "@/features/auth/UnauthorizedPage.vue";
 import { api } from "@/api/client";
 import { canAccessAdminModules } from "@/auth/accessControl";
-import { loadCurrentUserWithDingtalkLogin, resolveAdminToken } from "@/auth/dingtalkAuth";
+import {
+  cacheDingtalkLaunchParamsFromSearch,
+  loadCurrentUserWithDingtalkLogin,
+  resolveAdminToken,
+} from "@/auth/dingtalkAuth";
 import {
   getAuthenticatedUser,
   hasAuthenticationSucceeded,
@@ -115,6 +119,10 @@ async function guardAdminRoute(to: RouteLocationNormalized) {
 }
 
 router.beforeEach(async (to) => {
+  cacheDingtalkLaunchParamsFromSearch(
+    to.fullPath.includes("?") ? to.fullPath.slice(to.fullPath.indexOf("?")) : "",
+  );
+
   if (to.name === "unauthorized" || hasAuthenticationSucceeded()) {
     if (to.name === "unauthorized") {
       console.info("[auth:router] entering 401 page");

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cacheDingtalkLaunchParamsFromSearch,
   loadCurrentUserWithDingtalkLogin,
   requestDingtalkAuthCode,
   resolveAdminToken,
@@ -10,6 +11,7 @@ import {
 describe("dingtalk auth", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   it("reads the DingTalk clientId and corpid from the launch URL", () => {
@@ -19,8 +21,8 @@ describe("dingtalk auth", () => {
     expect(resolveDingtalkCorpId(locationSearch)).toBe("ding-corp");
   });
 
-  it("does not accept alternate corpId parameter spellings", () => {
-    expect(resolveDingtalkCorpId("?corpId=ding-corp")).toBeUndefined();
+  it("accepts alternate corpId parameter spelling", () => {
+    expect(resolveDingtalkCorpId("?corpId=ding-corp")).toBe("ding-corp");
   });
 
   it("reuses cached DingTalk launch params after the URL query is gone", () => {
@@ -29,6 +31,14 @@ describe("dingtalk auth", () => {
 
     expect(resolveDingtalkClientId("")).toBe("ding-client");
     expect(resolveDingtalkCorpId("")).toBe("ding-corp");
+  });
+
+  it("caches DingTalk launch params before requesting the JSAPI", () => {
+    cacheDingtalkLaunchParamsFromSearch("?clientId=ding-client&corpid=ding-corp");
+
+    expect(window.localStorage.getItem("costrategy:dingtalk-launch-params")).toBe(
+      JSON.stringify({ clientId: "ding-client", corpId: "ding-corp" }),
+    );
   });
 
   it("reads the admin auth token from the launch URL", () => {
