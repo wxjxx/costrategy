@@ -6,12 +6,13 @@ import { ElMessage } from "element-plus";
 import { api } from "@/api/client";
 import type { NotificationRule } from "@/types";
 import { formatDateTimeInShanghai } from "@/utils/datetime";
+import { isDebugModeEnabled, setDebugMode } from "@/utils/debugMode";
 import { clampPage, pageRows } from "@/utils/pagination";
 
 const queryClient = useQueryClient();
 const route = useRoute();
 const router = useRouter();
-const settingTabs = ["dingtalk", "sync", "notification", "records", "storage"] as const;
+const settingTabs = ["dingtalk", "sync", "notification", "records", "storage", "debug"] as const;
 type SettingTab = (typeof settingTabs)[number];
 function normalizeTab(value: unknown): SettingTab {
   return typeof value === "string" && settingTabs.includes(value as SettingTab)
@@ -33,6 +34,7 @@ const syncLogPage = ref(1);
 const syncLogPageSize = ref(10);
 const recordPage = ref(1);
 const recordPageSize = ref(10);
+const debugModeEnabled = ref(isDebugModeEnabled());
 
 const dingtalkSettings = computed(() =>
   (settings.value?.settings ?? []).filter((item) => item.group === "dingtalk"),
@@ -198,6 +200,12 @@ function showConnectionStatus() {
     `钉钉：${status?.dingtalk ?? "-"}，RustFS：${status?.rustfs ?? "-"}`,
   );
 }
+
+function updateDebugMode(enabled: boolean) {
+  debugModeEnabled.value = enabled;
+  setDebugMode(enabled);
+  ElMessage.success(enabled ? "调试模式已开启" : "调试模式已关闭");
+}
 </script>
 
 <template>
@@ -208,6 +216,7 @@ function showConnectionStatus() {
       <ElTabPane label="通知配置" name="notification" />
       <ElTabPane label="通知记录" name="records" />
       <ElTabPane label="存储配置" name="storage" />
+      <ElTabPane label="调试模式" name="debug" />
     </ElTabs>
 
     <section v-if="activeTab === 'dingtalk'" class="content-card">
@@ -359,6 +368,18 @@ function showConnectionStatus() {
       >
         保存配置
       </ElButton>
+    </section>
+
+    <section v-if="activeTab === 'debug'" class="content-card">
+      <h2>调试模式</h2>
+      <div class="rule-row debug-rule-row">
+        <ElSwitch
+          :model-value="debugModeEnabled"
+          @change="updateDebugMode(Boolean($event))"
+        />
+        <strong>启用 vConsole</strong>
+        <span>开启后会在当前浏览器本地写入 debug=1，并显示移动端调试控制台。</span>
+      </div>
     </section>
   </div>
 </template>

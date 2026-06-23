@@ -8,6 +8,9 @@ import "./styles/main.css";
 import App from "./App.vue";
 import { router } from "./router";
 import { setUnauthorizedRedirectHandler } from "@/api/client";
+import { ensureVConsole } from "@/utils/debugMode";
+
+ensureVConsole();
 
 setUnauthorizedRedirectHandler((path) => {
   if (router.currentRoute.value.path !== path) {

@@ -1,15 +1,39 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted } from "vue";
 import { InfoFilled } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
 import { resetAuthenticationState } from "@/auth/sessionState";
 import unauthorizedImage from "@/assets/401.png";
+import { enableDebugMode } from "@/utils/debugMode";
 
 const router = useRouter();
+let consecutiveDebugKeys = 0;
 
 function goHome() {
   resetAuthenticationState();
   void router.push("/");
 }
+
+function handleDebugKeydown(event: KeyboardEvent) {
+  if (event.key.toLowerCase() === "d") {
+    consecutiveDebugKeys += 1;
+    if (consecutiveDebugKeys >= 4) {
+      consecutiveDebugKeys = 0;
+      enableDebugMode();
+      window.location.reload();
+    }
+    return;
+  }
+  consecutiveDebugKeys = 0;
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", handleDebugKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleDebugKeydown);
+});
 </script>
 
 <template>
