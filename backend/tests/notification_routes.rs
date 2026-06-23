@@ -88,12 +88,17 @@ async fn admin_can_list_and_update_notification_rules() {
     .await;
     assert_eq!(list_response.status(), StatusCode::OK);
     let rules: serde_json::Value = test::read_body_json(list_response).await;
-    assert_eq!(rules.as_array().unwrap().len(), 4);
+    assert_eq!(rules.as_array().unwrap().len(), 5);
     assert!(rules
         .as_array()
         .unwrap()
         .iter()
         .any(|rule| rule["rule_type"] == "task_overdue" && rule["enabled"] == true));
+    assert!(rules
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|rule| rule["rule_type"] == "task_commented" && rule["enabled"] == true));
 
     let update_response = test::call_service(
         &app,

@@ -1,4 +1,4 @@
-use crate::dingtalk::DingTalkClient;
+use crate::dingtalk::{DingTalkClient, DingtalkClientError};
 use crate::error::{ApiErrorCode, AppError};
 use crate::notifications::{
     NewNotificationRecord, NotificationRepository, NotificationStatus, NotificationType,
@@ -30,13 +30,55 @@ where
     }
 
     pub async fn notify_task_assigned(&self, task: &Task) -> Result<(), AppError> {
+        if !self.rule_enabled(NotificationType::TaskAssigned).await? {
+            return Ok(());
+        }
         self.notify_task_receiver(NotificationType::TaskAssigned, "新任务分配", task)
             .await
     }
 
     pub async fn notify_assignee_changed(&self, task: &Task) -> Result<(), AppError> {
+        if !self.rule_enabled(NotificationType::AssigneeChanged).await? {
+            return Ok(());
+        }
         self.notify_task_receiver(NotificationType::AssigneeChanged, "负责人变更", task)
             .await
+    }
+
+    pub async fn notify_task_commented(
+        &self,
+        task: &Task,
+        author_id: uuid::Uuid,
+        comment_content: &str,
+    ) -> Result<(), AppError> {
+        if !self.rule_enabled(NotificationType::TaskCommented).await? {
+            return Ok(());
+        }
+        let message = build_comment_message(task, comment_content);
+        for receiver_id in task_receiver_ids(task)
+            .into_iter()
+            .filter(|receiver_id| *receiver_id != author_id)
+        {
+            self.send_task_notification_to_receiver(
+                NotificationType::TaskCommented,
+                task,
+                receiver_id,
+                message.clone(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn rule_enabled(&self, notification_type: NotificationType) -> Result<bool, AppError> {
+        Ok(self
+            .notifications
+            .list_rules()
+            .await
+            .map_err(|_| AppError::internal(ApiErrorCode::DatabaseError))?
+            .into_iter()
+            .find(|rule| rule.rule_type == notification_type)
+            .is_none_or(|rule| rule.enabled))
     }
 
     async fn notify_task_receiver(
@@ -68,6 +110,18 @@ where
         task: &Task,
         receiver_id: uuid::Uuid,
     ) -> Result<(), AppError> {
+        let message = build_task_message(action, task);
+        self.send_task_notification_to_receiver(notification_type, task, receiver_id, message)
+            .await
+    }
+
+    async fn send_task_notification_to_receiver(
+        &self,
+        notification_type: NotificationType,
+        task: &Task,
+        receiver_id: uuid::Uuid,
+        message: String,
+    ) -> Result<(), AppError> {
         let Some(receiver) = self
             .users
             .get_user(receiver_id)
@@ -80,16 +134,15 @@ where
             return Ok(());
         }
 
-        let message = build_task_message(action, task);
         let send_result = self
             .dingtalk
             .send_work_notification(&receiver.dingtalk_user_id, &message)
             .await;
         let (status, failure_reason) = match send_result {
             Ok(()) => (NotificationStatus::Success, None),
-            Err(_) => (
+            Err(error) => (
                 NotificationStatus::Failed,
-                Some("dingtalk notification failed".to_string()),
+                Some(notification_failure(&error)),
             ),
         };
 
@@ -259,9 +312,9 @@ where
             .await;
         let (status, failure_reason) = match send_result {
             Ok(()) => (NotificationStatus::Success, None),
-            Err(_) => (
+            Err(error) => (
                 NotificationStatus::Failed,
-                Some("dingtalk notification failed".to_string()),
+                Some(notification_failure(&error)),
             ),
         };
 
@@ -307,6 +360,27 @@ fn build_task_message(action: &str, task: &Task) -> String {
     )
 }
 
+fn build_comment_message(task: &Task, comment_content: &str) -> String {
+    let summary = summarize_comment(comment_content);
+    format!("新评论\n任务：{}\n评论：{}", task.title, summary)
+}
+
+fn summarize_comment(content: &str) -> String {
+    let trimmed = content.trim();
+    const MAX_CHARS: usize = 80;
+    let mut chars = trimmed.chars();
+    let summary = chars.by_ref().take(MAX_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!("{summary}...")
+    } else {
+        summary
+    }
+}
+
 fn build_task_jump_url(task: &Task) -> String {
     format!("/tasks/{}", task.id)
+}
+
+fn notification_failure(error: &DingtalkClientError) -> String {
+    format!("dingtalk notification failed: {error}")
 }

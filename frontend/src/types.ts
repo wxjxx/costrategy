@@ -184,6 +184,7 @@ export interface NotificationRule {
   rule_type:
     | "task_assigned"
     | "assignee_changed"
+    | "task_commented"
     | "due_tomorrow"
     | "task_overdue";
   enabled: boolean;

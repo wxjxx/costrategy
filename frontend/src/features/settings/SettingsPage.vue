@@ -144,6 +144,7 @@ function ruleLabel(ruleType: string): string {
   return {
     task_assigned: "新任务分配通知负责人",
     assignee_changed: "负责人变更通知新负责人",
+    task_commented: "新评论通知负责人",
     due_tomorrow: "截止前一天提醒负责人",
     task_overdue: "任务延期通知负责人和项目负责人",
   }[ruleType] ?? ruleType;
@@ -153,6 +154,7 @@ function notificationTypeLabel(notificationType: string): string {
   return {
     task_assigned: "新任务分配",
     assignee_changed: "负责人变更",
+    task_commented: "新评论",
     due_tomorrow: "截止前一天提醒",
     task_overdue: "任务延期",
   }[notificationType] ?? notificationType;
@@ -290,12 +292,7 @@ function updateDebugMode(enabled: boolean) {
         <strong>{{ ruleLabel(rule.rule_type) }}</strong>
         <span>当规则触发时，向对应负责人发送钉钉个人通知。</span>
       </div>
-      <ElAlert
-        title="第一版不支持：新评论通知、新附件通知、钉钉群机器人通知、钉钉待办、钉钉审批。"
-        type="warning"
-        show-icon
-        :closable="false"
-      />
+      <ElAlert title="当前通知通过钉钉个人工作通知发送。" type="info" show-icon :closable="false" />
     </section>
 
     <section v-if="activeTab === 'records'" class="content-card">

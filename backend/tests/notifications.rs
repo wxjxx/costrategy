@@ -86,7 +86,7 @@ async fn failed_dingtalk_notification_is_recorded_without_failing_business_flow(
     assert_eq!(records[0].status, NotificationStatus::Failed);
     assert_eq!(
         records[0].failure_reason.as_deref(),
-        Some("dingtalk notification failed")
+        Some("dingtalk notification failed: notify failed")
     );
 }
 

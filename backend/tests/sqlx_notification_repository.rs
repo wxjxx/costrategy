@@ -133,10 +133,13 @@ async fn sqlx_notification_repository_creates_and_lists_records() {
         .unwrap());
 
     let rules = notifications.list_rules().await.unwrap();
-    assert_eq!(rules.len(), 4);
+    assert_eq!(rules.len(), 5);
     assert!(rules
         .iter()
         .any(|rule| rule.rule_type == NotificationType::TaskOverdue && rule.enabled));
+    assert!(rules
+        .iter()
+        .any(|rule| rule.rule_type == NotificationType::TaskCommented && rule.enabled));
 
     let updated_rule = notifications
         .update_rule(NotificationType::TaskOverdue, false, receiver.id)

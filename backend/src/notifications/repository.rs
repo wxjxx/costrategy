@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub enum NotificationType {
     TaskAssigned,
     AssigneeChanged,
+    TaskCommented,
     DueTomorrow,
     TaskOverdue,
 }
@@ -452,6 +453,7 @@ impl NotificationType {
         match self {
             Self::TaskAssigned => "task_assigned",
             Self::AssigneeChanged => "assignee_changed",
+            Self::TaskCommented => "task_commented",
             Self::DueTomorrow => "due_tomorrow",
             Self::TaskOverdue => "task_overdue",
         }
@@ -462,6 +464,7 @@ fn default_notification_types() -> Vec<NotificationType> {
     vec![
         NotificationType::TaskAssigned,
         NotificationType::AssigneeChanged,
+        NotificationType::TaskCommented,
         NotificationType::DueTomorrow,
         NotificationType::TaskOverdue,
     ]
@@ -501,6 +504,7 @@ impl FromStr for NotificationType {
         match value {
             "task_assigned" => Ok(Self::TaskAssigned),
             "assignee_changed" => Ok(Self::AssigneeChanged),
+            "task_commented" => Ok(Self::TaskCommented),
             "due_tomorrow" => Ok(Self::DueTomorrow),
             "task_overdue" => Ok(Self::TaskOverdue),
             _ => Err(NotificationRepositoryError::Database),

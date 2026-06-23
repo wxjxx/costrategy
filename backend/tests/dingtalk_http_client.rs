@@ -64,6 +64,32 @@ async fn dingtalk_http_client_lists_departments_and_department_users() {
     server_handle.stop(true).await;
 }
 
+#[actix_web::test]
+async fn dingtalk_http_client_preserves_api_failure_details() {
+    let state = Arc::new(TestDingtalkState::default());
+    let (base_url, server) = start_test_server(state.clone());
+    let server_handle = server.handle();
+    actix_web::rt::spawn(server);
+    let client = DingtalkHttpClient::new(DingtalkConfig {
+        corp_id: "corp-id".to_string(),
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        agent_id: 123456,
+        oapi_base_url: base_url,
+    });
+
+    let error = client
+        .send_work_notification("missing-user", "任务提醒")
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "notify failed: errcode=33012, errmsg=userid invalid"
+    );
+    server_handle.stop(true).await;
+}
+
 #[derive(Default)]
 struct TestDingtalkState {
     token_requests: AtomicUsize,
@@ -140,10 +166,15 @@ async fn send_work_notification(
     state.notification_requests.fetch_add(1, Ordering::SeqCst);
     if !request.query_string().contains("access_token=token-1")
         || body["agent_id"] != 123456
-        || body["userid_list"] != "ding-user-1"
         || body["msg"]["text"]["content"] != "任务提醒"
     {
         return HttpResponse::BadRequest().finish();
+    }
+    if body["userid_list"] != "ding-user-1" {
+        return HttpResponse::Ok().json(json!({
+            "errcode": 33012,
+            "errmsg": "userid invalid"
+        }));
     }
 
     HttpResponse::Ok().json(json!({

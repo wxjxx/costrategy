@@ -143,7 +143,7 @@ where
         )
         .route(
             "/api/tasks/{task_id}/comments",
-            web::post().to(create_task_comment::<C, R, T>),
+            web::post().to(create_task_comment::<C, R, T, N>),
         );
 }
 
@@ -1342,9 +1342,10 @@ where
     Ok(HttpResponse::Ok().json(task))
 }
 
-async fn create_task_comment<C, R, T>(
+async fn create_task_comment<C, R, T, N>(
     state: web::Data<AppState<C, R>>,
     tasks: web::Data<T>,
+    notifications: web::Data<N>,
     request: HttpRequest,
     path: web::Path<uuid::Uuid>,
     payload: web::Json<CreateTaskCommentRequest>,
@@ -1353,19 +1354,30 @@ where
     C: DingTalkClient,
     R: UserRepository,
     T: TaskRepository,
+    N: NotificationRepository,
 {
     let current_user = require_current_user(&state, &request)?;
-    Ok(HttpResponse::Ok().json(
-        tasks
-            .create_comment(CreateTaskComment {
-                task_id: path.into_inner(),
-                author_id: current_user.id,
-                author_name: Some(current_user.name),
-                content: payload.content.clone(),
-            })
-            .await
-            .map_err(task_error_to_app)?,
-    ))
+    let task_id = path.into_inner();
+    let comment = tasks
+        .create_comment(CreateTaskComment {
+            task_id,
+            author_id: current_user.id,
+            author_name: Some(current_user.name),
+            content: payload.content.clone(),
+        })
+        .await
+        .map_err(task_error_to_app)?;
+
+    let task = tasks.get_task(task_id).await.map_err(task_error_to_app)?;
+    TaskNotificationService::new(
+        state.dingtalk.clone(),
+        state.users.clone(),
+        notifications.get_ref().clone(),
+    )
+    .notify_task_commented(&task, current_user.id, &comment.content)
+    .await?;
+
+    Ok(HttpResponse::Ok().json(comment))
 }
 
 async fn update_task<C, R, T, N>(

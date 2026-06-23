@@ -423,6 +423,28 @@ async fn task_create_and_assignee_change_trigger_dingtalk_personal_notifications
 }
 
 #[actix_web::test]
+async fn disabled_task_assigned_rule_skips_create_notification() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let cookie = login_cookie(&app, "manager-code").await;
+    fixture
+        .notifications
+        .update_rule(NotificationType::TaskAssigned, false, fixture.employee_id)
+        .await
+        .unwrap();
+
+    create_task(&app, cookie, fixture.task_payload(fixture.employee_id)).await;
+
+    assert!(fixture.dingtalk.sent_notifications().is_empty());
+    assert!(fixture
+        .notifications
+        .list_records()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[actix_web::test]
 async fn employee_can_update_own_task_status_but_not_others() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
@@ -611,6 +633,75 @@ async fn logged_in_user_can_read_task_detail_and_add_plain_text_comment() {
         .unwrap()
         .iter()
         .any(|log| log["action"] == "comment_created"));
+}
+
+#[actix_web::test]
+async fn new_comment_notifies_task_assignee_except_comment_author() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let other_cookie = login_cookie(&app, "other-code").await;
+    let task_id = create_task(
+        &app,
+        manager_cookie,
+        fixture.task_payload(fixture.employee_id),
+    )
+    .await;
+
+    let comment_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/api/tasks/{task_id}/comments"))
+            .cookie(other_cookie)
+            .set_json(json!({ "content": "请负责人确认一下最新方案。" }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(comment_response.status(), StatusCode::OK);
+    let sent = fixture.dingtalk.sent_notifications();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[1].receiver_dingtalk_user_id, "employee");
+    assert!(sent[1].message.contains("新评论"));
+    assert!(sent[1].message.contains("请负责人确认一下最新方案。"));
+    let records = fixture.notifications.list_records().await.unwrap();
+    assert!(records
+        .iter()
+        .any(|record| record.notification_type == NotificationType::TaskCommented));
+}
+
+#[actix_web::test]
+async fn task_assignee_comment_does_not_notify_self() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+    let task_id = create_task(
+        &app,
+        manager_cookie,
+        fixture.task_payload(fixture.employee_id),
+    )
+    .await;
+
+    let comment_response = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&format!("/api/tasks/{task_id}/comments"))
+            .cookie(employee_cookie)
+            .set_json(json!({ "content": "我已经更新进度。" }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(comment_response.status(), StatusCode::OK);
+    assert_eq!(fixture.dingtalk.sent_notifications().len(), 1);
+    assert!(fixture
+        .notifications
+        .list_records()
+        .await
+        .unwrap()
+        .iter()
+        .all(|record| record.notification_type != NotificationType::TaskCommented));
 }
 
 #[actix_web::test]

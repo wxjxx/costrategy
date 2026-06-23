@@ -46,6 +46,12 @@ pub enum DingtalkClientError {
     SyncFailed,
     #[error("notify failed")]
     NotifyFailed,
+    #[error("{operation} failed: errcode={errcode}, errmsg={errmsg}")]
+    ApiFailed {
+        operation: &'static str,
+        errcode: i64,
+        errmsg: String,
+    },
 }
 
 #[async_trait]
@@ -258,19 +264,34 @@ impl DingtalkHttpClient {
             fallback_error.clone()
         })?;
         if response.errcode != 0 {
+            let errmsg = response.errmsg.unwrap_or_default();
             log::error!(
                 "dingtalk http: api failed, path={}, errcode={}, errmsg={}",
                 path,
                 response.errcode,
-                response.errmsg.as_deref().unwrap_or("")
+                errmsg
             );
-            return Err(fallback_error);
+            return Err(DingtalkClientError::ApiFailed {
+                operation: operation_label(fallback_error),
+                errcode: response.errcode,
+                errmsg,
+            });
         }
 
         response.result.ok_or_else(|| {
             log::error!("dingtalk http: response missing result, path={path}");
             fallback_error
         })
+    }
+}
+
+fn operation_label(error: DingtalkClientError) -> &'static str {
+    match error {
+        DingtalkClientError::ConfigMissing => "config",
+        DingtalkClientError::LoginFailed => "login",
+        DingtalkClientError::SyncFailed => "sync",
+        DingtalkClientError::NotifyFailed => "notify",
+        DingtalkClientError::ApiFailed { operation, .. } => operation,
     }
 }
 

@@ -450,7 +450,7 @@ fn components() -> Value {
                 required_prop("sent_at", datetime_schema())
             ]),
             "NotificationRule": object_schema(vec![
-                required_prop("rule_type", enum_schema(vec!["task_assigned", "assignee_changed", "due_tomorrow", "task_overdue"])),
+                required_prop("rule_type", enum_schema(vec!["task_assigned", "assignee_changed", "task_commented", "due_tomorrow", "task_overdue"])),
                 required_prop("enabled", json!({ "type": "boolean" })),
                 optional_prop("updated_by", uuid_schema()),
                 optional_prop("updated_at", datetime_schema())
