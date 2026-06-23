@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadCurrentUserWithDingtalkLogin,
   requestDingtalkAuthCode,
@@ -8,6 +8,10 @@ import {
 } from "./dingtalkAuth";
 
 describe("dingtalk auth", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
   it("reads the DingTalk clientId and corpid from the launch URL", () => {
     const locationSearch = "?clientId=ding-client&corpid=ding-corp";
 
@@ -17,6 +21,14 @@ describe("dingtalk auth", () => {
 
   it("does not accept alternate corpId parameter spellings", () => {
     expect(resolveDingtalkCorpId("?corpId=ding-corp")).toBeUndefined();
+  });
+
+  it("reuses cached DingTalk launch params after the URL query is gone", () => {
+    expect(resolveDingtalkClientId("?clientId=ding-client&corpid=ding-corp")).toBe("ding-client");
+    expect(resolveDingtalkCorpId("?clientId=ding-client&corpid=ding-corp")).toBe("ding-corp");
+
+    expect(resolveDingtalkClientId("")).toBe("ding-client");
+    expect(resolveDingtalkCorpId("")).toBe("ding-corp");
   });
 
   it("reads the admin auth token from the launch URL", () => {

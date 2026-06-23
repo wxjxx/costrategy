@@ -16,6 +16,13 @@ interface DingtalkWindow extends Window {
   dd?: DingtalkJsApi;
 }
 
+const DINGTALK_LAUNCH_PARAMS_STORAGE_KEY = "costrategy:dingtalk-launch-params";
+
+type DingtalkLaunchParams = {
+  clientId?: string;
+  corpId?: string;
+};
+
 export interface AuthBootstrapRequestOptions {
   skipUnauthorizedRedirect?: boolean;
 }
@@ -39,6 +46,39 @@ export class DingtalkAuthError extends Error {
 
 function getCurrentSearch(): string {
   return typeof window === "undefined" ? "" : window.location.search;
+}
+
+function getLaunchParamStorage(): Storage | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function readCachedDingtalkLaunchParams(): DingtalkLaunchParams {
+  const storage = getLaunchParamStorage();
+  if (!storage) return {};
+  const raw = storage.getItem(DINGTALK_LAUNCH_PARAMS_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as DingtalkLaunchParams;
+    return {
+      clientId: typeof parsed.clientId === "string" ? parsed.clientId : undefined,
+      corpId: typeof parsed.corpId === "string" ? parsed.corpId : undefined,
+    };
+  } catch {
+    storage.removeItem(DINGTALK_LAUNCH_PARAMS_STORAGE_KEY);
+    return {};
+  }
+}
+
+function cacheDingtalkLaunchParams(params: DingtalkLaunchParams) {
+  if (!params.clientId && !params.corpId) return;
+  const storage = getLaunchParamStorage();
+  if (!storage) return;
+  storage.setItem(DINGTALK_LAUNCH_PARAMS_STORAGE_KEY, JSON.stringify(params));
 }
 
 function getDingtalkJsApi(): DingtalkJsApi | undefined {
@@ -72,13 +112,27 @@ function getErrorLogPayload(error: unknown): Record<string, unknown> {
 export function resolveDingtalkClientId(locationSearch = getCurrentSearch()): string | undefined {
   const params = new URLSearchParams(locationSearch);
   const clientId = params.get("clientId");
-  return clientId || undefined;
+  if (clientId) {
+    cacheDingtalkLaunchParams({
+      ...readCachedDingtalkLaunchParams(),
+      clientId,
+    });
+    return clientId;
+  }
+  return readCachedDingtalkLaunchParams().clientId;
 }
 
 export function resolveDingtalkCorpId(locationSearch = getCurrentSearch()): string | undefined {
   const params = new URLSearchParams(locationSearch);
   const corpId = params.get("corpid");
-  return corpId || undefined;
+  if (corpId) {
+    cacheDingtalkLaunchParams({
+      ...readCachedDingtalkLaunchParams(),
+      corpId,
+    });
+    return corpId;
+  }
+  return readCachedDingtalkLaunchParams().corpId;
 }
 
 export function resolveAdminToken(locationSearch = getCurrentSearch()): string | undefined {
