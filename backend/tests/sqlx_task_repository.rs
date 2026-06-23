@@ -95,6 +95,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert_eq!(created.status, TaskStatus::Todo);
     assert_eq!(created.project_name.as_deref(), Some("任务测试项目"));
     assert_eq!(created.assignee_name.as_deref(), Some("测试员工"));
+    assert!(created.updated_at <= chrono::Utc::now());
     let low_priority = tasks
         .create_task(CreateTask {
             project_id: project.id,
@@ -189,6 +190,15 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
         .activity_logs
         .iter()
         .any(|log| log.action == "comment_created"));
+    assert!(detail.activity_logs.iter().any(|log| {
+        log.action == "status_changed"
+            && log
+                .after_value
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(|value| value.as_str())
+                == Some("blocked")
+    }));
 
     let attachment_record = tasks
         .get_attachment(created.id, attachment.id)
@@ -218,7 +228,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
         .list_tasks(TaskFilter {
             project_id: Some(project.id),
             include_archived: true,
-            sort: TaskSort::Priority,
+            sort: TaskSort::UpdatedAt,
             ..TaskFilter::default()
         })
         .await

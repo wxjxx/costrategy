@@ -22,7 +22,10 @@ const router = useRouter();
 const queryClient = useQueryClient();
 const currentPage = ref(1);
 const pageSize = ref(10);
-const pagedTasks = computed(() => pageRows(props.tasks, currentPage.value, pageSize.value));
+const sortedTasks = computed(() =>
+  [...props.tasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
+);
+const pagedTasks = computed(() => pageRows(sortedTasks.value, currentPage.value, pageSize.value));
 
 const deleteMutation = useMutation({
   mutationFn: (taskId: string) => api.deleteTask(taskId),
@@ -102,7 +105,7 @@ watch(pageSize, () => {
       background
       layout="total, sizes, prev, pager, next, jumper"
       :page-sizes="[10, 20, 30, 50]"
-      :total="tasks.length"
+      :total="sortedTasks.length"
     />
   </div>
 </template>

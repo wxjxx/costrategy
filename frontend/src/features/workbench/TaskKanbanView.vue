@@ -14,12 +14,17 @@ import {
   groupTasksByDisplayStatus,
   moveTaskForDisplay,
   primaryTaskAssigneeName,
+  statusLabel,
   taskAssigneeNames,
 } from "@/features/tasks/taskWorkflow";
 
 const props = defineProps<{
   tasks: Task[];
   currentUser: CurrentUser;
+}>();
+
+const emit = defineEmits<{
+  showAll: [status: TaskStatus];
 }>();
 
 const router = useRouter();
@@ -100,7 +105,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
       </header>
       <VueDraggableNext
         class="kanban-list"
-        :list="groups[column.key]"
+        :list="groups[column.key].slice(0, 10)"
         :group="{ name: 'tasks' }"
         item-key="id"
         @change="onDrop(column.key, $event)"
@@ -128,6 +133,14 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
           </p>
         </article>
       </VueDraggableNext>
+      <button
+        v-if="groups[column.key].length > 10"
+        type="button"
+        class="kanban-more-button"
+        @click="emit('showAll', column.key)"
+      >
+        查看全部{{ statusLabel(column.key) }}任务
+      </button>
     </section>
   </div>
 </template>

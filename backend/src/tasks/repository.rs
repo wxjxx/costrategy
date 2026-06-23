@@ -1,3 +1,4 @@
+use crate::time::shanghai_today;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
@@ -27,6 +28,7 @@ pub enum TaskSort {
     DueDate,
     Priority,
     Status,
+    UpdatedAt,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -46,6 +48,7 @@ pub struct Task {
     pub description_json: Value,
     pub creator_id: Uuid,
     pub creator_name: Option<String>,
+    pub updated_at: DateTime<Utc>,
     pub archived: bool,
     pub is_overdue: bool,
     pub display_status: String,
@@ -108,6 +111,8 @@ pub struct TaskActivityLog {
     pub actor_id: Option<Uuid>,
     pub actor_name: Option<String>,
     pub action: String,
+    pub before_value: Option<Value>,
+    pub after_value: Option<Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -260,6 +265,7 @@ struct StoredTask {
     due_date: NaiveDate,
     description_json: Value,
     creator_id: Uuid,
+    updated_at: DateTime<Utc>,
     archived: bool,
 }
 
@@ -295,6 +301,8 @@ struct MemoryActivityLog {
     actor_id: Option<Uuid>,
     actor_name: Option<String>,
     action: String,
+    before_value: Option<Value>,
+    after_value: Option<Value>,
     created_at: DateTime<Utc>,
 }
 
@@ -422,6 +430,7 @@ impl TaskRepository for MemoryTaskRepository {
             due_date: task.due_date,
             description_json: task.description_json,
             creator_id: task.creator_id,
+            updated_at: Utc::now(),
             archived: false,
         };
         let mut state = self.inner.lock().expect("memory task repository lock");
@@ -431,6 +440,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(stored.creator_id),
             actor_name: None,
             action: "task_created".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
         state.tasks.insert(stored.id, stored.clone());
@@ -467,6 +478,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(stored.author_id),
             actor_name: stored.author_name.clone(),
             action: "comment_created".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
 
@@ -508,6 +521,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(stored.uploader_id),
             actor_name: stored.uploader_name.clone(),
             action: "attachment_uploaded".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
 
@@ -554,6 +569,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(actor_id),
             actor_name: None,
             action: "attachment_deleted".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
 
@@ -581,6 +598,7 @@ impl TaskRepository for MemoryTaskRepository {
         existing.start_date = task.start_date;
         existing.due_date = task.due_date;
         existing.description_json = task.description_json;
+        existing.updated_at = Utc::now();
         let cloned = existing.clone();
         state.activity_logs.push(MemoryActivityLog {
             id: Uuid::new_v4(),
@@ -588,6 +606,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(actor_id),
             actor_name: None,
             action: "schedule_changed".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
         Ok(cloned.into())
@@ -604,7 +624,9 @@ impl TaskRepository for MemoryTaskRepository {
             return Err(TaskRepositoryError::NotFound);
         };
         ensure_status_transition(existing.status, status)?;
+        let before_status = existing.status;
         existing.status = status;
+        existing.updated_at = Utc::now();
         let cloned = existing.clone();
         state.activity_logs.push(MemoryActivityLog {
             id: Uuid::new_v4(),
@@ -612,6 +634,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(actor_id),
             actor_name: None,
             action: "status_changed".to_string(),
+            before_value: Some(serde_json::json!({ "status": before_status.as_str() })),
+            after_value: Some(serde_json::json!({ "status": status.as_str() })),
             created_at: Utc::now(),
         });
         Ok(cloned.into())
@@ -623,6 +647,7 @@ impl TaskRepository for MemoryTaskRepository {
             return Err(TaskRepositoryError::NotFound);
         };
         existing.archived = true;
+        existing.updated_at = Utc::now();
         let cloned = existing.clone();
         state.activity_logs.push(MemoryActivityLog {
             id: Uuid::new_v4(),
@@ -630,6 +655,8 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(actor_id),
             actor_name: None,
             action: "task_archived".to_string(),
+            before_value: None,
+            after_value: None,
             created_at: Utc::now(),
         });
         Ok(cloned.into())
@@ -669,6 +696,7 @@ impl MemoryTaskRepository {
             due_date: task.due_date,
             description_json: task.description_json,
             creator_id: task.creator_id,
+            updated_at: Utc::now(),
             archived: false,
         };
         self.inner
@@ -706,7 +734,7 @@ fn task_select_sql(from_clause: &str) -> String {
                     join users assignee_user on assignee_user.id = ta.user_id
                     where ta.task_id = t.id
                 ) as assignee_names,
-                t.status, t.priority, t.start_date, t.due_date, t.description_json,
+                t.status, t.priority, t.start_date, t.due_date, t.description_json, t.updated_at,
                 t.creator_id, creator.name as creator_name, t.archived_at
          {from_clause}
          join projects p on p.id = t.project_id
@@ -838,7 +866,8 @@ impl TaskRepository for SqlxTaskRepository {
         .map(row_to_attachment)
         .collect::<Result<Vec<_>, _>>()?;
         let activity_logs = sqlx::query(
-            "select l.id, l.task_id, l.actor_id, u.name as actor_name, l.action, l.created_at
+            "select l.id, l.task_id, l.actor_id, u.name as actor_name, l.action,
+                    l.before_value, l.after_value, l.created_at
              from task_activity_logs l
              left join users u on u.id = l.actor_id
              where l.task_id = $1
@@ -877,7 +906,7 @@ impl TaskRepository for SqlxTaskRepository {
                 )
                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, archived_at
+                          due_date, description_json, creator_id, updated_at, archived_at
              )
              {}",
             task_select_sql("from inserted t"),
@@ -896,7 +925,7 @@ impl TaskRepository for SqlxTaskRepository {
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
         replace_task_assignees(&mut tx, task_id, &assignee_ids).await?;
-        insert_activity_log(&mut tx, task_id, task.creator_id, "task_created").await?;
+        insert_activity_log(&mut tx, task_id, task.creator_id, "task_created", None, None).await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -942,6 +971,8 @@ impl TaskRepository for SqlxTaskRepository {
             comment.task_id,
             comment.author_id,
             "comment_created",
+            None,
+            None,
         )
         .await?;
         tx.commit()
@@ -997,6 +1028,8 @@ impl TaskRepository for SqlxTaskRepository {
             attachment.task_id,
             attachment.uploader_id,
             "attachment_uploaded",
+            None,
+            None,
         )
         .await?;
         tx.commit()
@@ -1060,7 +1093,15 @@ impl TaskRepository for SqlxTaskRepository {
         let Some(row) = row else {
             return Err(TaskRepositoryError::NotFound);
         };
-        insert_activity_log(&mut tx, task_id, actor_id, "attachment_deleted").await?;
+        insert_activity_log(
+            &mut tx,
+            task_id,
+            actor_id,
+            "attachment_deleted",
+            None,
+            None,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1095,7 +1136,7 @@ impl TaskRepository for SqlxTaskRepository {
                     updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, archived_at
+                          due_date, description_json, creator_id, updated_at, archived_at
              )
              {}",
             task_select_sql("from updated t"),
@@ -1116,7 +1157,7 @@ impl TaskRepository for SqlxTaskRepository {
             return Err(TaskRepositoryError::NotFound);
         };
         replace_task_assignees(&mut tx, id, &assignee_ids).await?;
-        insert_activity_log(&mut tx, id, actor_id, "schedule_changed").await?;
+        insert_activity_log(&mut tx, id, actor_id, "schedule_changed", None, None).await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1156,7 +1197,7 @@ impl TaskRepository for SqlxTaskRepository {
                 update tasks set status = $2, updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, archived_at
+                          due_date, description_json, creator_id, updated_at, archived_at
              )
              {}",
             task_select_sql("from updated t"),
@@ -1166,7 +1207,15 @@ impl TaskRepository for SqlxTaskRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
-        insert_activity_log(&mut tx, id, actor_id, "status_changed").await?;
+        insert_activity_log(
+            &mut tx,
+            id,
+            actor_id,
+            "status_changed",
+            Some(serde_json::json!({ "status": current_status })),
+            Some(serde_json::json!({ "status": status.as_str() })),
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1184,7 +1233,7 @@ impl TaskRepository for SqlxTaskRepository {
                 update tasks set archived_at = now(), updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, archived_at
+                          due_date, description_json, creator_id, updated_at, archived_at
              )
              {}",
             task_select_sql("from archived t"),
@@ -1196,7 +1245,7 @@ impl TaskRepository for SqlxTaskRepository {
         let Some(row) = row else {
             return Err(TaskRepositoryError::NotFound);
         };
-        insert_activity_log(&mut tx, id, actor_id, "task_archived").await?;
+        insert_activity_log(&mut tx, id, actor_id, "task_archived", None, None).await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1227,6 +1276,7 @@ impl From<StoredTask> for Task {
             description_json: task.description_json,
             creator_id: task.creator_id,
             creator_name: None,
+            updated_at: task.updated_at,
             archived: task.archived,
             is_overdue,
             display_status: display_status(task.status, is_overdue).to_string(),
@@ -1302,6 +1352,8 @@ impl From<MemoryActivityLog> for TaskActivityLog {
             actor_id: log.actor_id,
             actor_name: log.actor_name,
             action: log.action,
+            before_value: log.before_value,
+            after_value: log.after_value,
             created_at: log.created_at,
         }
     }
@@ -1334,6 +1386,7 @@ impl TaskSort {
             Self::DueDate => "due_date",
             Self::Priority => "priority",
             Self::Status => "status",
+            Self::UpdatedAt => "updated_at",
         }
     }
 }
@@ -1378,7 +1431,7 @@ impl<'de> serde::Deserialize<'de> for TaskPriority {
 
 impl Default for TaskSort {
     fn default() -> Self {
-        Self::DueDate
+        Self::UpdatedAt
     }
 }
 
@@ -1417,6 +1470,7 @@ impl FromStr for TaskSort {
             "due_date" => Ok(Self::DueDate),
             "priority" => Ok(Self::Priority),
             "status" => Ok(Self::Status),
+            "updated_at" => Ok(Self::UpdatedAt),
             other => Err(TaskSortParseError(other.to_string())),
         }
     }
@@ -1538,7 +1592,9 @@ fn sort_tasks(tasks: &mut [Task], sort: TaskSort) {
             TaskSort::DueDate => left.due_date.cmp(&right.due_date),
             TaskSort::Priority => priority_rank(right.priority).cmp(&priority_rank(left.priority)),
             TaskSort::Status => status_rank(left.status).cmp(&status_rank(right.status)),
+            TaskSort::UpdatedAt => right.updated_at.cmp(&left.updated_at),
         }
+        .then(right.updated_at.cmp(&left.updated_at))
         .then(left.due_date.cmp(&right.due_date))
         .then(left.title.cmp(&right.title))
     });
@@ -1546,13 +1602,14 @@ fn sort_tasks(tasks: &mut [Task], sort: TaskSort) {
 
 fn task_order_by(sort: TaskSort) -> &'static str {
     match sort {
-        TaskSort::DueDate => "t.due_date asc, t.title asc",
+        TaskSort::DueDate => "t.due_date asc, t.updated_at desc, t.title asc",
         TaskSort::Priority => {
-            "case t.priority when 'high' then 1 when 'medium' then 2 else 3 end asc, t.due_date asc, t.title asc"
+            "case t.priority when 'high' then 1 when 'medium' then 2 else 3 end asc, t.updated_at desc, t.due_date asc, t.title asc"
         }
         TaskSort::Status => {
-            "case t.status when 'todo' then 1 when 'in_progress' then 2 when 'blocked' then 3 else 4 end asc, t.due_date asc, t.title asc"
+            "case t.status when 'todo' then 1 when 'in_progress' then 2 when 'blocked' then 3 else 4 end asc, t.updated_at desc, t.due_date asc, t.title asc"
         }
+        TaskSort::UpdatedAt => "t.updated_at desc, t.due_date asc, t.title asc",
     }
 }
 
@@ -1648,6 +1705,9 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
             .map_err(|_| TaskRepositoryError::Database)?,
         creator_name: row
             .try_get("creator_name")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        updated_at: row
+            .try_get("updated_at")
             .map_err(|_| TaskRepositoryError::Database)?,
         archived: row
             .try_get::<Option<chrono::DateTime<Utc>>, _>("archived_at")
@@ -1778,6 +1838,12 @@ fn row_to_activity_log(row: sqlx::postgres::PgRow) -> Result<TaskActivityLog, Ta
         action: row
             .try_get("action")
             .map_err(|_| TaskRepositoryError::Database)?,
+        before_value: row
+            .try_get("before_value")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        after_value: row
+            .try_get("after_value")
+            .map_err(|_| TaskRepositoryError::Database)?,
         created_at: row
             .try_get("created_at")
             .map_err(|_| TaskRepositoryError::Database)?,
@@ -1789,15 +1855,19 @@ async fn insert_activity_log(
     task_id: Uuid,
     actor_id: Uuid,
     action: &'static str,
+    before_value: Option<Value>,
+    after_value: Option<Value>,
 ) -> Result<(), TaskRepositoryError> {
     sqlx::query(
-        "insert into task_activity_logs (id, task_id, actor_id, action)
-         values ($1, $2, $3, $4)",
+        "insert into task_activity_logs (id, task_id, actor_id, action, before_value, after_value)
+         values ($1, $2, $3, $4, $5, $6)",
     )
     .bind(Uuid::new_v4())
     .bind(task_id)
     .bind(actor_id)
     .bind(action)
+    .bind(before_value)
+    .bind(after_value)
     .execute(&mut **tx)
     .await
     .map_err(|_| TaskRepositoryError::Database)?;
@@ -1805,7 +1875,7 @@ async fn insert_activity_log(
 }
 
 fn compute_overdue(_status: TaskStatus, due_date: NaiveDate) -> bool {
-    Utc::now().date_naive() > due_date
+    shanghai_today() > due_date
 }
 
 fn display_status(status: TaskStatus, _is_overdue: bool) -> &'static str {

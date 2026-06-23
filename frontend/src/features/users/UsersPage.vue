@@ -6,6 +6,7 @@ import { ElMessage } from "element-plus";
 import { api } from "@/api/client";
 import UserAvatar from "@/components/UserAvatar.vue";
 import type { UserRole, UserStatus } from "@/types";
+import { formatDateTimeInShanghai } from "@/utils/datetime";
 
 const queryClient = useQueryClient();
 const { data: users } = useQuery({ queryKey: ["users"], queryFn: api.users });
@@ -45,7 +46,7 @@ const latestSyncedAt = computed(() => {
     .map((user) => user.last_synced_at)
     .filter((value): value is string => Boolean(value))
     .sort();
-  return timestamps.at(-1)?.slice(0, 19).replace("T", " ") ?? "-";
+  return formatDateTimeInShanghai(timestamps.at(-1));
 });
 const selectedUser = computed(() =>
   users.value?.find((user) => user.id === selectedUserId.value),

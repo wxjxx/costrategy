@@ -249,6 +249,7 @@ fn task(assignee_id: Uuid, assignee_name: Option<String>) -> Task {
         description_json: json!({"type": "doc", "content": []}),
         creator_id: Uuid::new_v4(),
         creator_name: None,
+        updated_at: chrono::Utc::now(),
         archived: false,
         is_overdue: false,
         display_status: "todo".to_string(),

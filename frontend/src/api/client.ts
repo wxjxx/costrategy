@@ -99,7 +99,11 @@ export const api = {
   adminTokenLogin: async (token: string): Promise<CurrentUser> =>
     (await http.post("/auth/admin-token/login", { token })).data,
   tasks: async (filters: TaskFilters = {}): Promise<Task[]> =>
-    (await http.get("/tasks", { params: buildTaskQueryParams(filters) })).data,
+    (
+      await http.get("/tasks", {
+        params: buildTaskQueryParams({ ...filters, sort: "updated_at" } as TaskFilters & { sort: string }),
+      })
+    ).data,
   taskDetail: async (taskId: string): Promise<TaskDetail> =>
     (await http.get(`/tasks/${taskId}`)).data,
   updateTaskStatus: async (taskId: string, status: TaskStatus): Promise<Task> =>

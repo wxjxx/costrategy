@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { api } from "@/api/client";
 import type { NotificationRule } from "@/types";
+import { formatDateTimeInShanghai } from "@/utils/datetime";
 import { clampPage, pageRows } from "@/utils/pagination";
 
 const queryClient = useQueryClient();
@@ -160,8 +161,7 @@ function receiverName(receiverId: string): string {
 }
 
 function formatDateTime(value?: string): string {
-  const matched = value?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/u);
-  return matched ? `${matched[1]} ${matched[2]}` : (value ?? "-");
+  return formatDateTimeInShanghai(value);
 }
 
 function notificationTaskId(row: { task_id?: string; content_summary: string }): string | undefined {

@@ -1,6 +1,7 @@
 use crate::dingtalk::{DingTalkClient, DingtalkSyncService};
+use crate::time::{shanghai_datetime, shanghai_now};
 use crate::users::UserRepository;
-use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDateTime, NaiveTime, TimeZone};
+use chrono::{Duration as ChronoDuration, NaiveDateTime, NaiveTime};
 use tokio::task::JoinHandle;
 
 const CONTACT_SYNC_HOUR: u32 = 3;
@@ -12,8 +13,8 @@ where
 {
     tokio::spawn(async move {
         loop {
-            let now = Local::now();
-            let next_run = next_contact_sync_run(now);
+            let now = shanghai_now();
+            let next_run = next_contact_sync_run(now.naive_local());
             let sleep_for = (next_run - now)
                 .to_std()
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
@@ -35,10 +36,7 @@ pub fn next_contact_sync_run_after(now: NaiveDateTime) -> NaiveDateTime {
     }
 }
 
-fn next_contact_sync_run(now: DateTime<Local>) -> DateTime<Local> {
-    let naive = next_contact_sync_run_after(now.naive_local());
-    Local
-        .from_local_datetime(&naive)
-        .single()
-        .unwrap_or_else(|| now + ChronoDuration::minutes(1))
+fn next_contact_sync_run(now: NaiveDateTime) -> chrono::DateTime<chrono_tz::Tz> {
+    let naive = next_contact_sync_run_after(now);
+    shanghai_datetime(naive.date(), naive.time())
 }

@@ -27,6 +27,7 @@ const task: Task = {
   due_date: "2026-06-10",
   description_json: {},
   creator_id: "user-2",
+  updated_at: "2026-06-09T09:30:00Z",
   archived: false,
   is_overdue: false,
   display_status: "in_progress",
@@ -123,5 +124,14 @@ describe("taskGantt", () => {
 
     expect(taskDetailPathFromGanttTask(taskRow!)).toBe("/tasks/task-1");
     expect(taskDetailPathFromGanttTask(projectRow!)).toBeUndefined();
+  });
+
+  it("does not render done tasks in gantt", () => {
+    const ganttTasks = buildGanttTasks(
+      [task, { ...task, id: "task-2", status: "done", title: "已完成任务" }],
+      "project",
+    );
+
+    expect(ganttTasks.some((item) => item.id === "task-2")).toBe(false);
   });
 });

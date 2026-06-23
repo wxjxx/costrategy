@@ -73,6 +73,7 @@ export interface Task {
   description_json: Record<string, unknown>;
   creator_id: string;
   creator_name?: string;
+  updated_at: string;
   archived: boolean;
   is_overdue: boolean;
   display_status: string;
@@ -125,6 +126,8 @@ export interface TaskActivityLog {
   action: string;
   actor_id?: string;
   actor_name?: string;
+  before_value?: Record<string, unknown>;
+  after_value?: Record<string, unknown>;
   created_at: string;
 }
 

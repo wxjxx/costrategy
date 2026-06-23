@@ -11,3 +11,12 @@ const ACTION_LABELS: Record<string, string> = {
 export function activityActionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action;
 }
+
+export function activityStatusLabel(status?: string): string | undefined {
+  return {
+    todo: "待开始",
+    in_progress: "进行中",
+    blocked: "阻塞",
+    done: "已完成",
+  }[status ?? ""];
+}

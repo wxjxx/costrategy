@@ -22,7 +22,8 @@ import {
   taskAssigneeNames,
 } from "@/features/tasks/taskWorkflow";
 import { clampPage, pageRows } from "@/utils/pagination";
-import { activityActionLabel } from "./activityLabels";
+import { formatDateTimeInShanghai } from "@/utils/datetime";
+import { activityActionLabel, activityStatusLabel } from "./activityLabels";
 import { attachmentPreviewKind, type AttachmentPreviewKind } from "./attachmentPreview";
 import { renderDescriptionHtml } from "./richText";
 
@@ -217,6 +218,14 @@ function openRichContentImage(event: MouseEvent) {
   previewImageUrl.value = target.currentSrc || target.src;
 }
 
+function activityTitle(log: { action: string; after_value?: Record<string, unknown> }) {
+  if (log.action !== "status_changed") return activityActionLabel(log.action);
+  const targetStatus = activityStatusLabel(
+    typeof log.after_value?.status === "string" ? log.after_value.status : undefined,
+  );
+  return targetStatus ? `更新状态为${targetStatus}` : activityActionLabel(log.action);
+}
+
 async function deleteCurrentTask() {
   if (!task.value) return;
   try {
@@ -347,7 +356,7 @@ async function deleteCurrentTask() {
               <strong>{{ comment.author_name }}</strong>
               <p>{{ comment.content }}</p>
             </div>
-            <time>{{ comment.created_at.slice(0, 16).replace("T", " ") }}</time>
+            <time>{{ formatDateTimeInShanghai(comment.created_at, false) }}</time>
           </div>
           <div class="comment-input">
             <ElInput v-model="commentContent" placeholder="请输入评论内容..." />
@@ -361,9 +370,9 @@ async function deleteCurrentTask() {
             <ElTimelineItem
               v-for="log in detail.activity_logs"
               :key="log.id"
-              :timestamp="log.created_at.slice(0, 16).replace('T', ' ')"
+              :timestamp="formatDateTimeInShanghai(log.created_at, false)"
             >
-              <strong>{{ activityActionLabel(log.action) }}</strong>
+              <strong>{{ activityTitle(log) }}</strong>
               <p>{{ log.actor_name }}</p>
             </ElTimelineItem>
           </ElTimeline>

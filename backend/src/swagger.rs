@@ -154,7 +154,7 @@ fn paths() -> Value {
                     query_param("date_from", "string", "开始日期，YYYY-MM-DD"),
                     query_param("date_to", "string", "截止日期，YYYY-MM-DD"),
                     query_param("include_archived", "boolean", "是否包含已归档任务，默认 false"),
-                    query_param("sort", "string", "排序字段：due_date、priority、status")
+                    query_param("sort", "string", "排序字段：updated_at、due_date、priority、status")
                 ],
                 Value::Null,
                 array_response_ref("Task")
@@ -435,6 +435,8 @@ fn components() -> Value {
                 optional_prop("actor_id", uuid_schema()),
                 optional_prop("actor_name", string_schema()),
                 required_prop("action", string_schema()),
+                optional_prop("before_value", json!({ "type": "object", "additionalProperties": true })),
+                optional_prop("after_value", json!({ "type": "object", "additionalProperties": true })),
                 required_prop("created_at", datetime_schema())
             ]),
             "NotificationRecord": object_schema(vec![
@@ -695,6 +697,7 @@ fn task_schema() -> Value {
         ),
         required_prop("creator_id", uuid_schema()),
         optional_prop("creator_name", string_schema()),
+        required_prop("updated_at", datetime_schema()),
         required_prop("archived", json!({ "type": "boolean" })),
         required_prop("is_overdue", json!({ "type": "boolean" })),
         required_prop("display_status", string_schema()),

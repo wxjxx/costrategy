@@ -118,7 +118,7 @@ export function buildGanttTasks(
   const projectTasks = new Map<string, GanttTask>();
   const ganttTasks: GanttTask[] = [];
 
-  tasks.forEach((task) => {
+  tasks.filter((task) => task.status !== "done").forEach((task) => {
     const projectId = `project-${task.project_id}`;
     if (!projectTasks.has(projectId)) {
       const projectTask = {

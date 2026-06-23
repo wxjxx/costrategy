@@ -11,4 +11,5 @@ pub mod settings;
 pub mod storage;
 pub mod swagger;
 pub mod tasks;
+pub mod time;
 pub mod users;

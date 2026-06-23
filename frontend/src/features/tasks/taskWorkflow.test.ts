@@ -24,6 +24,7 @@ const baseTask: Task = {
   due_date: "2025-05-30",
   description_json: {},
   creator_id: "user-2",
+  updated_at: "2025-05-20T08:00:00Z",
   archived: false,
   is_overdue: false,
   display_status: "进行中",

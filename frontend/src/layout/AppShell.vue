@@ -16,6 +16,7 @@ import { canAccessAdminModules } from "@/auth/accessControl";
 import UserAvatar from "@/components/UserAvatar.vue";
 import logoUrl from "@/assets/logo.png";
 import type { NotificationRecord } from "@/types";
+import { formatDateTimeInShanghai } from "@/utils/datetime";
 
 const route = useRoute();
 const router = useRouter();
@@ -144,8 +145,7 @@ function notificationDetail(record: NotificationRecord): string {
 }
 
 function notificationTime(record: NotificationRecord): string {
-  const matched = record.sent_at.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/u);
-  return matched ? `${matched[1]} ${matched[2]}` : record.sent_at;
+  return formatDateTimeInShanghai(record.sent_at, false);
 }
 
 function notificationTarget(record: NotificationRecord): string {

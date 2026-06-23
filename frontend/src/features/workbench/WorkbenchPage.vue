@@ -69,6 +69,11 @@ function toggleMyTasksFilter() {
   }
   store.setFilters({ ...store.filters, assignee_id: userId });
 }
+
+function showAllByStatus(status: "todo" | "in_progress" | "blocked" | "done") {
+  store.setFilters({ ...store.filters, status });
+  store.setView("list");
+}
 </script>
 
 <template>
@@ -127,6 +132,7 @@ function toggleMyTasksFilter() {
         v-if="store.view === 'kanban' && currentUser"
         :tasks="tasks"
         :current-user="currentUser"
+        @show-all="showAllByStatus"
       />
       <TaskGanttView v-else-if="store.view === 'gantt'" :tasks="tasks" />
       <TaskListView v-else :tasks="tasks" />
