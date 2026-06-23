@@ -1,5 +1,7 @@
 # costrategy
 
+![costrategy 宣传图](docs/assets/costrategy-promo.png)
+
 costrategy 是一个面向团队协作的项目任务管理系统，提供项目、任务、人员、通知和系统配置管理能力。项目包含 Rust 后端和 Vue 前端，可本地开发运行，也可打包为单个 Docker 镜像部署。
 
 ## 功能特性
