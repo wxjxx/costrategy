@@ -188,6 +188,50 @@ async fn rich_text_image_upload_rejects_non_images() {
     assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
 }
 
+#[actix_web::test]
+async fn rich_text_image_upload_rejects_svg() {
+    let fixture = AttachmentRouteFixture::new().await;
+    let app = attachment_test_app(&fixture).await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+
+    let response = test::call_service(
+        &app,
+        svg_multipart_request("/api/rich-text/images", employee_cookie),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
+}
+
+#[actix_web::test]
+async fn task_attachment_upload_rejects_svg() {
+    let fixture = AttachmentRouteFixture::new().await;
+    let app = attachment_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let employee_cookie = login_cookie(&app, "employee-code").await;
+    let task_id = create_task(
+        &app,
+        manager_cookie,
+        fixture.task_payload(fixture.employee_id),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        svg_multipart_request(
+            &format!("/api/tasks/{task_id}/attachments"),
+            employee_cookie,
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: ApiErrorResponse = test::read_body_json(response).await;
+    assert_eq!(body.error.code, ApiErrorCode::ValidationFailed);
+}
+
 struct AttachmentRouteFixture {
     dingtalk: MockDingTalkClient,
     users: MemoryUserRepository,
@@ -377,6 +421,28 @@ fn image_multipart_request(uri: &str, cookie: Cookie<'static>) -> actix_http::Re
          Content-Type: image/png\r\n\
          \r\n\
          png-bytes\r\n\
+         --{boundary}--\r\n"
+    );
+
+    test::TestRequest::post()
+        .uri(uri)
+        .cookie(cookie)
+        .insert_header((
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        ))
+        .set_payload(body)
+        .to_request()
+}
+
+fn svg_multipart_request(uri: &str, cookie: Cookie<'static>) -> actix_http::Request {
+    let boundary = "svg-boundary";
+    let body = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"diagram.svg\"\r\n\
+         Content-Type: image/svg+xml\r\n\
+         \r\n\
+         <svg xmlns=\"http://www.w3.org/2000/svg\"></svg>\r\n\
          --{boundary}--\r\n"
     );
 

@@ -1,4 +1,4 @@
-export type AttachmentPreviewKind = "docx" | "excel" | "pdf" | "pptx";
+export type AttachmentPreviewKind = "docx" | "excel" | "image" | "pdf" | "pptx";
 
 const extensionPreviewKinds: Record<string, AttachmentPreviewKind> = {
   docx: "docx",
@@ -6,6 +6,12 @@ const extensionPreviewKinds: Record<string, AttachmentPreviewKind> = {
   xlsx: "excel",
   pdf: "pdf",
   pptx: "pptx",
+  bmp: "image",
+  gif: "image",
+  jpeg: "image",
+  jpg: "image",
+  png: "image",
+  webp: "image",
 };
 
 const mimePreviewKinds: Record<string, AttachmentPreviewKind> = {
@@ -16,6 +22,11 @@ const mimePreviewKinds: Record<string, AttachmentPreviewKind> = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
   "application/vnd.ms-powerpoint": "pptx",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "image/bmp": "image",
+  "image/gif": "image",
+  "image/jpeg": "image",
+  "image/png": "image",
+  "image/webp": "image",
 };
 
 export function attachmentPreviewKind(

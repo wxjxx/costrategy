@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { useQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
@@ -25,6 +25,7 @@ import { clampPage, pageRows } from "@/utils/pagination";
 import { formatDateTimeInShanghai } from "@/utils/datetime";
 import { activityActionLabel, activityStatusLabel } from "./activityLabels";
 import { attachmentPreviewKind, type AttachmentPreviewKind } from "./attachmentPreview";
+import { isSvgFile } from "./fileValidation";
 import { renderDescriptionHtml } from "./richText";
 
 const route = useRoute();
@@ -43,6 +44,7 @@ const attachmentPreview = ref<{
   fileName: string;
   kind: AttachmentPreviewKind;
   blob?: Blob;
+  url?: string;
 }>();
 let attachmentPreviewRequestId = 0;
 
@@ -87,9 +89,14 @@ watch(attachmentPageSize, () => {
 watch(attachmentPreviewVisible, (visible) => {
   if (!visible) {
     attachmentPreviewRequestId += 1;
+    revokeAttachmentPreviewUrl();
     attachmentPreview.value = undefined;
     attachmentPreviewLoading.value = false;
   }
+});
+
+onBeforeUnmount(() => {
+  revokeAttachmentPreviewUrl();
 });
 
 function refreshTaskQueries() {
@@ -153,12 +160,13 @@ async function downloadAttachment(attachmentId: string, fileName: string) {
 async function previewAttachment(attachment: TaskAttachment) {
   const kind = attachmentPreviewKind(attachment.file_name, attachment.mime_type);
   if (!kind) {
-    ElMessage.warning("仅支持预览 Word、Excel、PDF、PPT 文件，请下载查看");
+    ElMessage.warning("仅支持预览 Word、Excel、PDF、PPT、图片文件，请下载查看");
     return;
   }
 
   const requestId = attachmentPreviewRequestId + 1;
   attachmentPreviewRequestId = requestId;
+  revokeAttachmentPreviewUrl();
   attachmentPreview.value = {
     id: attachment.id,
     fileName: attachment.file_name,
@@ -170,11 +178,13 @@ async function previewAttachment(attachment: TaskAttachment) {
   try {
     const blob = await api.downloadTaskAttachment(taskId.value, attachment.id);
     if (requestId !== attachmentPreviewRequestId) return;
+    const url = kind === "image" ? URL.createObjectURL(blob) : undefined;
     attachmentPreview.value = {
       id: attachment.id,
       fileName: attachment.file_name,
       kind,
       blob,
+      url,
     };
   } catch {
     if (requestId === attachmentPreviewRequestId) {
@@ -185,6 +195,12 @@ async function previewAttachment(attachment: TaskAttachment) {
     if (requestId === attachmentPreviewRequestId) {
       attachmentPreviewLoading.value = false;
     }
+  }
+}
+
+function revokeAttachmentPreviewUrl() {
+  if (attachmentPreview.value?.url) {
+    URL.revokeObjectURL(attachmentPreview.value.url);
   }
 }
 
@@ -200,7 +216,11 @@ function selectUploadFile() {
 function uploadSelectedFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (file) uploadMutation.mutate(file);
+  if (file && isSvgFile(file)) {
+    ElMessage.warning("不支持上传 SVG 文件");
+  } else if (file) {
+    uploadMutation.mutate(file);
+  }
   input.value = "";
 }
 
@@ -404,6 +424,15 @@ async function deleteCurrentTask() {
           :is="attachmentPreviewComponent"
           v-if="attachmentPreview?.blob && attachmentPreviewComponent"
           :src="attachmentPreview.blob"
+        />
+        <ElImage
+          v-else-if="attachmentPreview?.kind === 'image' && attachmentPreview.url"
+          class="attachment-image-preview"
+          :src="attachmentPreview.url"
+          :preview-src-list="[attachmentPreview.url]"
+          fit="contain"
+          hide-on-click-modal
+          preview-teleported
         />
       </div>
       <template #footer>

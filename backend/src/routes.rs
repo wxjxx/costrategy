@@ -1574,6 +1574,9 @@ async fn read_uploaded_attachment(mut payload: Multipart) -> Result<UploadedAtta
         if bytes.is_empty() {
             return Err(AppError::bad_request(ApiErrorCode::ValidationFailed));
         }
+        if is_svg_upload(&file_name, mime_type.as_deref()) {
+            return Err(AppError::bad_request(ApiErrorCode::ValidationFailed));
+        }
 
         return Ok(UploadedAttachment {
             file_name,
@@ -1630,9 +1633,18 @@ fn image_extension_from_mime(mime_type: Option<&str>) -> Option<&'static str> {
         "image/png" => Some("png"),
         "image/gif" => Some("gif"),
         "image/webp" => Some("webp"),
-        "image/svg+xml" => Some("svg"),
         _ => None,
     }
+}
+
+fn is_svg_upload(file_name: &str, mime_type: Option<&str>) -> bool {
+    let is_svg_mime = mime_type
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("image/svg+xml"));
+    let is_svg_extension = file_name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("svg"));
+    is_svg_mime || is_svg_extension
 }
 
 fn sanitize_file_name(file_name: &str) -> String {

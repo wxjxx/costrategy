@@ -30,6 +30,7 @@ import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
 import { clampPage, pageRows } from "@/utils/pagination";
+import { isSvgFile } from "./fileValidation";
 import { renderDescriptionHtml } from "./richText";
 
 const route = useRoute();
@@ -102,10 +103,12 @@ const editor = useEditor({
       class: "tiptap-editor",
     },
     handlePaste(_view, event) {
-      const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-        file.type.startsWith("image/"),
-      );
+      const selectedFiles = Array.from(event.clipboardData?.files ?? []);
+      const imageFiles = selectedFiles.filter(isAllowedRichTextImage);
       if (imageFiles.length === 0) return false;
+      if (selectedFiles.length > imageFiles.length) {
+        ElMessage.warning("不支持上传 SVG 图片");
+      }
       event.preventDefault();
       void uploadEditorImages(imageFiles);
       return true;
@@ -219,7 +222,11 @@ function selectEditorImage() {
 
 function uploadSelectedEditorImage(event: Event) {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []).filter((file) => file.type.startsWith("image/"));
+  const selectedFiles = Array.from(input.files ?? []);
+  const files = selectedFiles.filter(isAllowedRichTextImage);
+  if (selectedFiles.length > files.length) {
+    ElMessage.warning("不支持上传 SVG 图片");
+  }
   if (files.length > 0) void uploadEditorImages(files);
   input.value = "";
 }
@@ -246,6 +253,10 @@ async function uploadEditorImage(file: File) {
   }
 }
 
+function isAllowedRichTextImage(file: File): boolean {
+  return file.type.startsWith("image/") && !isSvgFile(file);
+}
+
 function insertTable() {
   const currentEditor = editor.value;
   if (!currentEditor) return;
@@ -269,7 +280,11 @@ function selectAttachmentFile() {
 
 function addPendingFiles(event: Event) {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []);
+  const selectedFiles = Array.from(input.files ?? []);
+  const files = selectedFiles.filter((file) => !isSvgFile(file));
+  if (selectedFiles.length > files.length) {
+    ElMessage.warning("不支持上传 SVG 文件");
+  }
   if (files.length > 0) {
     pendingFiles.value = [...pendingFiles.value, ...files];
     ElMessage.success(`已选择 ${files.length} 个附件，保存任务后上传`);

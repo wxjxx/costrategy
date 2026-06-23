@@ -21,7 +21,21 @@ describe("attachmentPreviewKind", () => {
     ).toBe("pptx");
   });
 
+  it.each([
+    ["截图.PNG", "image"],
+    ["photo.jpeg", "image"],
+    ["动图.gif", "image"],
+    ["preview.webp", "image"],
+  ] as const)("detects supported image preview files by extension", (fileName, kind) => {
+    expect(attachmentPreviewKind(fileName)).toBe(kind);
+  });
+
+  it("falls back to known image mime types when the filename has no extension", () => {
+    expect(attachmentPreviewKind("download", "image/png; charset=binary")).toBe("image");
+  });
+
   it("does not preview unsupported files", () => {
     expect(attachmentPreviewKind("notes.txt", "text/plain")).toBeUndefined();
+    expect(attachmentPreviewKind("vector.svg", "image/svg+xml")).toBeUndefined();
   });
 });
