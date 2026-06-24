@@ -53,6 +53,7 @@ const editorImageInput = ref<HTMLInputElement>();
 const pendingFiles = ref<File[]>([]);
 const attachmentPage = ref(1);
 const attachmentPageSize = ref(10);
+const originalDueDate = ref("");
 const attachmentRows = computed(() => [
   ...(detail.value?.attachments ?? []).map((attachment) => ({
     id: attachment.id,
@@ -129,6 +130,7 @@ watch(
       start_date: task.start_date,
       due_date: task.due_date,
     };
+    originalDueDate.value = task.due_date;
     editor.value?.commands.setContent(renderDescriptionHtml(task.description_json));
   },
   { immediate: true },
@@ -150,13 +152,14 @@ onBeforeUnmount(() => {
 });
 
 const saveMutation = useMutation({
-  mutationFn: async () => {
+  mutationFn: async (dueDateChangeReason?: string) => {
     const payload = {
       ...form.value,
       assignee_id: form.value.assignee_ids[0] ?? "",
       status: form.value.status as "todo" | "in_progress" | "blocked" | "done",
       priority: form.value.priority as "low" | "medium" | "high",
       description_json: editor.value?.getJSON() ?? {},
+      due_date_change_reason: dueDateChangeReason,
     };
     const task = await (taskId.value
       ? api.updateTask(taskId.value, payload)
@@ -175,8 +178,39 @@ const saveMutation = useMutation({
   },
 });
 
-function saveTask() {
-  saveMutation.mutate();
+const attachmentDeleteMutation = useMutation({
+  mutationFn: (attachmentId: string) =>
+    api.deleteTaskAttachment(taskId.value ?? "", attachmentId),
+  onSuccess: () => {
+    ElMessage.success("附件已删除");
+    void queryClient.invalidateQueries({ queryKey: ["task-detail-form", taskId] });
+    void queryClient.invalidateQueries({ queryKey: ["task-detail"] });
+  },
+  onError: () => ElMessage.error("附件删除失败，请查看后端日志"),
+});
+
+async function saveTask() {
+  if (!isNew.value && originalDueDate.value && form.value.due_date !== originalDueDate.value) {
+    try {
+      const { value } = await ElMessageBox.prompt(
+        "请输入截止日期变更原因",
+        "截止日期变更",
+        {
+          inputType: "textarea",
+          inputPlaceholder: "请说明为什么调整截止日期",
+          inputValidator: (value) => Boolean(String(value ?? "").trim()),
+          inputErrorMessage: "请填写变更原因",
+          confirmButtonText: "继续保存",
+          cancelButtonText: "取消",
+        },
+      );
+      saveMutation.mutate(String(value ?? "").trim());
+    } catch {
+      // 用户取消填写时不保存。
+    }
+    return;
+  }
+  saveMutation.mutate(undefined);
 }
 
 async function setLink() {
@@ -295,6 +329,34 @@ function addPendingFiles(event: Event) {
 function removePendingFile(index: number) {
   pendingFiles.value = pendingFiles.value.filter((_, currentIndex) => currentIndex !== index);
 }
+
+async function downloadAttachment(attachmentId: string, fileName: string) {
+  if (!taskId.value) return;
+  try {
+    const blob = await api.downloadTaskAttachment(taskId.value, attachmentId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    ElMessage.error("附件下载失败，请查看后端日志");
+  }
+}
+
+async function deleteAttachment(attachmentId: string, fileName: string) {
+  try {
+    await ElMessageBox.confirm(`确认删除附件“${fileName}”？`, "删除附件", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+    attachmentDeleteMutation.mutate(attachmentId);
+  } catch {
+    // 用户取消删除。
+  }
+}
 </script>
 
 <template>
@@ -309,7 +371,7 @@ function removePendingFile(index: number) {
           </ElCol>
           <ElCol :xs="24" :sm="12" :lg="8">
             <ElFormItem label="所属项目：" required>
-              <ElSelect v-model="form.project_id">
+              <ElSelect v-model="form.project_id" filterable placeholder="请选择项目">
                 <ElOption
                   v-for="project in projects ?? []"
                   :key="project.id"
@@ -324,6 +386,7 @@ function removePendingFile(index: number) {
               <ElSelect
                 v-model="form.assignee_ids"
                 multiple
+                filterable
                 collapse-tags
                 collapse-tags-tooltip
                 placeholder="请选择负责人"
@@ -416,7 +479,14 @@ function removePendingFile(index: number) {
         <ElTableColumn prop="created_at" label="上传时间" width="210" />
         <ElTableColumn label="操作" width="130">
           <template #default="{ row }">
-            <ElButton v-if="!row.pending" link type="primary"><ElIcon><Download /></ElIcon></ElButton>
+            <ElButton
+              v-if="!row.pending"
+              link
+              type="primary"
+              @click="downloadAttachment(row.id, row.file_name)"
+            >
+              <ElIcon><Download /></ElIcon>
+            </ElButton>
             <ElButton
               v-if="row.pending"
               link
@@ -425,7 +495,15 @@ function removePendingFile(index: number) {
             >
               移除
             </ElButton>
-            <ElButton v-else link type="danger"><ElIcon><Delete /></ElIcon></ElButton>
+            <ElButton
+              v-else
+              link
+              type="danger"
+              :loading="attachmentDeleteMutation.isPending.value"
+              @click="deleteAttachment(row.id, row.file_name)"
+            >
+              <ElIcon><Delete /></ElIcon>
+            </ElButton>
           </template>
         </ElTableColumn>
       </ElTable>

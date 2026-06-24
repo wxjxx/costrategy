@@ -170,25 +170,46 @@ impl DingtalkHttpClient {
         url.query_pairs_mut()
             .append_pair("appkey", &self.config.client_id)
             .append_pair("appsecret", &self.config.client_secret);
-        let response: AccessTokenResponse = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| {
-                log::error!("dingtalk http: get access token request failed: {error}");
-                DingtalkClientError::SyncFailed
-            })?
-            .json()
-            .await
-            .map_err(|error| {
-                log::error!("dingtalk http: get access token response parse failed: {error}");
-                DingtalkClientError::SyncFailed
-            })?;
-        let errcode = response.errcode.unwrap_or(0);
-        if errcode != 0 {
+
+        let operation = "get_access_token";
+        let redacted_url = redact_url(&url);
+        let started_at = Instant::now();
+        log::info!(
+            "dingtalk http: request started, operation={operation}, method=GET, url={redacted_url}"
+        );
+        let raw_response = self.http.get(url).send().await.map_err(|error| {
             log::error!(
-                "dingtalk http: get access token api failed, errcode={}, errmsg={}",
+                "dingtalk http: request failed, operation={operation}, method=GET, url={redacted_url}, elapsed_ms={}: {error}",
+                started_at.elapsed().as_millis()
+            );
+            DingtalkClientError::SyncFailed
+        })?;
+        let status = raw_response.status();
+        let response_text = raw_response.text().await.map_err(|error| {
+            log::error!(
+                "dingtalk http: response read failed, operation={operation}, method=GET, url={redacted_url}, status={status}, elapsed_ms={}: {error}",
+                started_at.elapsed().as_millis()
+            );
+            DingtalkClientError::SyncFailed
+        })?;
+        log::info!(
+            "dingtalk http: response received, operation={operation}, method=GET, url={redacted_url}, status={status}, elapsed_ms={}, response_body={}",
+            started_at.elapsed().as_millis(),
+            redact_json_text(&response_text)
+        );
+
+        let response: AccessTokenResponse = serde_json::from_str(&response_text).map_err(|error| {
+            log::error!(
+                "dingtalk http: get access token response parse failed, status={status}, body={}: {error}",
+                redact_json_text(&response_text)
+            );
+            DingtalkClientError::SyncFailed
+        })?;
+        let errcode = response.errcode.unwrap_or(0);
+        if !status.is_success() || errcode != 0 {
+            log::error!(
+                "dingtalk http: get access token api failed, status={}, errcode={}, errmsg={}",
+                status,
                 errcode,
                 response.errmsg.as_deref().unwrap_or("")
             );
@@ -235,6 +256,7 @@ impl DingtalkHttpClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        let operation = operation_label(&fallback_error);
         let access_token = self.access_token().await.map_err(|error| match error {
             DingtalkClientError::ConfigMissing => DingtalkClientError::ConfigMissing,
             _ => fallback_error.clone(),
@@ -243,6 +265,12 @@ impl DingtalkHttpClient {
         url.query_pairs_mut()
             .append_pair("access_token", &access_token);
 
+        let redacted_url = redact_url(&url);
+        let redacted_body = redact_json_value(&body);
+        let started_at = Instant::now();
+        log::info!(
+            "dingtalk http: request started, operation={operation}, method=POST, path={path}, url={redacted_url}, request_body={redacted_body}"
+        );
         let raw_response = self
             .http
             .post(url)
@@ -250,42 +278,66 @@ impl DingtalkHttpClient {
             .send()
             .await
             .map_err(|error| {
-                log::error!("dingtalk http: request failed, path={path}: {error}");
+                log::error!(
+                    "dingtalk http: request failed, operation={operation}, method=POST, path={path}, url={redacted_url}, elapsed_ms={}: {error}",
+                    started_at.elapsed().as_millis()
+                );
                 fallback_error.clone()
             })?;
         let status = raw_response.status();
-        if !status.is_success() {
-            log::error!("dingtalk http: non-success http status, path={path}, status={status}");
-        }
-        let response: DingtalkApiResponse<T> = raw_response.json().await.map_err(|error| {
+        let response_text = raw_response.text().await.map_err(|error| {
             log::error!(
-                "dingtalk http: response parse failed, path={path}, status={status}: {error}"
+                "dingtalk http: response read failed, operation={operation}, method=POST, path={path}, url={redacted_url}, status={status}, elapsed_ms={}: {error}",
+                started_at.elapsed().as_millis()
             );
             fallback_error.clone()
         })?;
+        log::info!(
+            "dingtalk http: response received, operation={operation}, method=POST, path={path}, url={redacted_url}, status={status}, elapsed_ms={}, response_body={}",
+            started_at.elapsed().as_millis(),
+            redact_json_text(&response_text)
+        );
+        if !status.is_success() {
+            log::error!(
+                "dingtalk http: non-success http status, operation={operation}, path={path}, status={status}, response_body={}",
+                redact_json_text(&response_text)
+            );
+        }
+        let response: DingtalkApiResponse<T> =
+            serde_json::from_str(&response_text).map_err(|error| {
+                log::error!(
+                    "dingtalk http: response parse failed, operation={operation}, path={path}, status={status}, body={}: {error}",
+                    redact_json_text(&response_text)
+                );
+                fallback_error.clone()
+            })?;
         if response.errcode != 0 {
             let errmsg = response.errmsg.unwrap_or_default();
             log::error!(
-                "dingtalk http: api failed, path={}, errcode={}, errmsg={}",
+                "dingtalk http: api failed, operation={}, path={}, http_status={}, errcode={}, errmsg={}",
+                operation,
                 path,
+                status,
                 response.errcode,
                 errmsg
             );
             return Err(DingtalkClientError::ApiFailed {
-                operation: operation_label(fallback_error),
+                operation,
                 errcode: response.errcode,
                 errmsg,
             });
         }
 
         response.result.ok_or_else(|| {
-            log::error!("dingtalk http: response missing result, path={path}");
+            log::error!(
+                "dingtalk http: response missing result, operation={operation}, path={path}"
+            );
             fallback_error
         })
     }
 }
 
-fn operation_label(error: DingtalkClientError) -> &'static str {
+fn operation_label(error: &DingtalkClientError) -> &'static str {
     match error {
         DingtalkClientError::ConfigMissing => "config",
         DingtalkClientError::LoginFailed => "login",
@@ -293,6 +345,81 @@ fn operation_label(error: DingtalkClientError) -> &'static str {
         DingtalkClientError::NotifyFailed => "notify",
         DingtalkClientError::ApiFailed { operation, .. } => operation,
     }
+}
+
+fn redact_url(url: &Url) -> String {
+    let mut redacted = url.clone();
+    let pairs = redacted
+        .query_pairs()
+        .map(|(key, value)| {
+            let value = if is_sensitive_field(&key) {
+                "***"
+            } else {
+                value.as_ref()
+            };
+            (key.into_owned(), value.to_string())
+        })
+        .collect::<Vec<_>>();
+    redacted.set_query(None);
+    if !pairs.is_empty() {
+        redacted.query_pairs_mut().extend_pairs(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
+    }
+    redacted.to_string()
+}
+
+fn redact_json_text(text: &str) -> String {
+    let trimmed = text.trim();
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(value) => redact_json_value(&value),
+        Err(_) => summarize_text(trimmed),
+    }
+}
+
+fn redact_json_value(value: &serde_json::Value) -> String {
+    summarize_text(&redact_json_value_inner(value).to_string())
+}
+
+fn redact_json_value_inner(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    let value = if is_sensitive_field(key) {
+                        serde_json::Value::String("***".to_string())
+                    } else {
+                        redact_json_value_inner(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(redact_json_value_inner).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_field(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "access_token" | "appsecret" | "client_secret" | "code" | "secret"
+    )
+}
+
+fn summarize_text(text: &str) -> String {
+    const MAX_LOG_BODY_CHARS: usize = 2000;
+    if text.chars().count() <= MAX_LOG_BODY_CHARS {
+        return text.to_string();
+    }
+
+    let mut summary = text.chars().take(MAX_LOG_BODY_CHARS).collect::<String>();
+    summary.push_str("...<truncated>");
+    summary
 }
 
 #[async_trait]
@@ -569,5 +696,57 @@ impl DingTalkClient for MockDingTalkClient {
             message: message.to_string(),
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redact_url_hides_dingtalk_credentials() {
+        let url = Url::parse(
+            "https://oapi.dingtalk.com/gettoken?appkey=app-key&appsecret=secret&access_token=token",
+        )
+        .unwrap();
+
+        let redacted = redact_url(&url);
+
+        assert!(redacted.contains("appkey=app-key"));
+        assert!(redacted.contains("appsecret=***"));
+        assert!(redacted.contains("access_token=***"));
+        assert!(!redacted.contains("appsecret=secret"));
+        assert!(!redacted.contains("access_token=token"));
+    }
+
+    #[test]
+    fn redact_json_value_hides_nested_sensitive_fields() {
+        let redacted = redact_json_value(&json!({
+            "code": "login-code",
+            "msg": {
+                "text": { "content": "任务提醒" },
+                "client_secret": "secret"
+            },
+            "access_token": "token"
+        }));
+
+        assert!(redacted.contains("任务提醒"));
+        assert!(redacted.contains("\"code\":\"***\""));
+        assert!(redacted.contains("\"client_secret\":\"***\""));
+        assert!(redacted.contains("\"access_token\":\"***\""));
+        assert!(!redacted.contains("login-code"));
+        assert!(!redacted.contains("\"client_secret\":\"secret\""));
+        assert!(!redacted.contains("\"access_token\":\"token\""));
+    }
+
+    #[test]
+    fn redact_json_text_truncates_large_non_json_body() {
+        let body = "x".repeat(2100);
+
+        let redacted = redact_json_text(&body);
+
+        assert!(redacted.ends_with("...<truncated>"));
+        assert!(redacted.len() < body.len());
     }
 }

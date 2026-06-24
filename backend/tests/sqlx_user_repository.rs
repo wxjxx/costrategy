@@ -118,6 +118,8 @@ async fn sqlx_user_repository_upserts_contacts_and_sync_log() {
     );
 
     repo.record_sync_log(SyncLogRecord {
+        started_at: None,
+        finished_at: None,
         status: "success".to_string(),
         created_users: 1,
         updated_users: 1,

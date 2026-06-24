@@ -972,6 +972,11 @@ button {
   overflow-y: auto;
 }
 
+.activity-reason {
+  margin-top: 4px;
+  color: var(--text);
+}
+
 .bottom-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1139,6 +1144,13 @@ button {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .projects-page .section-heading {

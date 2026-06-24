@@ -141,6 +141,7 @@ pub struct UpdateTask {
     pub start_date: NaiveDate,
     pub due_date: NaiveDate,
     pub description_json: Value,
+    pub due_date_change_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,9 +168,13 @@ pub struct CreateTaskAttachment {
 pub struct TaskFilter {
     pub keyword: Option<String>,
     pub project_id: Option<Uuid>,
+    pub project_ids: Vec<Uuid>,
     pub assignee_id: Option<Uuid>,
+    pub assignee_ids: Vec<Uuid>,
     pub status: Option<TaskStatus>,
+    pub statuses: Vec<TaskStatus>,
     pub priority: Option<TaskPriority>,
+    pub priorities: Vec<TaskPriority>,
     pub date_from: Option<NaiveDate>,
     pub date_to: Option<NaiveDate>,
     pub include_archived: bool,
@@ -584,10 +589,16 @@ impl TaskRepository for MemoryTaskRepository {
         task: UpdateTask,
     ) -> Result<Task, TaskRepositoryError> {
         validate_date_range(task.start_date, task.due_date)?;
+        let due_date_change_reason = normalize_due_date_change_reason(task.due_date_change_reason)?;
         let mut state = self.inner.lock().expect("memory task repository lock");
         let Some(existing) = state.tasks.get_mut(&id).filter(|task| !task.archived) else {
             return Err(TaskRepositoryError::NotFound);
         };
+        let previous_due_date = existing.due_date;
+        let new_due_date = task.due_date;
+        if previous_due_date != task.due_date && due_date_change_reason.is_none() {
+            return Err(TaskRepositoryError::Validation);
+        }
 
         existing.project_id = task.project_id;
         existing.title = task.title;
@@ -606,8 +617,19 @@ impl TaskRepository for MemoryTaskRepository {
             actor_id: Some(actor_id),
             actor_name: None,
             action: "schedule_changed".to_string(),
-            before_value: None,
-            after_value: None,
+            before_value: if previous_due_date != new_due_date {
+                Some(serde_json::json!({ "due_date": previous_due_date }))
+            } else {
+                None
+            },
+            after_value: if previous_due_date != new_due_date {
+                Some(serde_json::json!({
+                    "due_date": new_due_date,
+                    "reason": due_date_change_reason,
+                }))
+            } else {
+                None
+            },
             created_at: Utc::now(),
         });
         Ok(cloned.into())
@@ -746,17 +768,21 @@ fn task_select_sql(from_clause: &str) -> String {
 #[async_trait]
 impl TaskRepository for SqlxTaskRepository {
     async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>, TaskRepositoryError> {
+        let project_ids = normalized_optional_ids(filter.project_id, &filter.project_ids);
+        let assignee_ids = normalized_optional_ids(filter.assignee_id, &filter.assignee_ids);
+        let statuses = normalized_optional_statuses(filter.status, &filter.statuses);
+        let priorities = normalized_optional_priorities(filter.priority, &filter.priorities);
         let order_by = task_order_by(filter.sort);
         let query = format!(
             "{} 
              where ($8::bool = true or t.archived_at is null)
-               and ($1::uuid is null or t.project_id = $1)
-               and ($2::uuid is null or exists (
+               and ($1::uuid[] is null or t.project_id = any($1))
+               and ($2::uuid[] is null or exists (
                     select 1 from task_assignees filter_assignee
-                    where filter_assignee.task_id = t.id and filter_assignee.user_id = $2
+                    where filter_assignee.task_id = t.id and filter_assignee.user_id = any($2)
                ))
-               and ($3::text is null or t.status = $3)
-               and ($4::text is null or t.priority = $4)
+               and ($3::text[] is null or t.status = any($3))
+               and ($4::text[] is null or t.priority = any($4))
                and ($5::date is null or t.due_date >= $5)
                and ($6::date is null or t.start_date <= $6)
                and ($7::text is null or t.title ilike ('%' || $7 || '%'))
@@ -764,10 +790,10 @@ impl TaskRepository for SqlxTaskRepository {
             task_select_sql("from tasks t"),
         );
         let rows = sqlx::query(&query)
-            .bind(filter.project_id)
-            .bind(filter.assignee_id)
-            .bind(filter.status.map(TaskStatus::as_str))
-            .bind(filter.priority.map(TaskPriority::as_str))
+            .bind(project_ids)
+            .bind(assignee_ids)
+            .bind(statuses)
+            .bind(priorities)
             .bind(filter.date_from)
             .bind(filter.date_to)
             .bind(filter.keyword)
@@ -925,7 +951,15 @@ impl TaskRepository for SqlxTaskRepository {
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
         replace_task_assignees(&mut tx, task_id, &assignee_ids).await?;
-        insert_activity_log(&mut tx, task_id, task.creator_id, "task_created", None, None).await?;
+        insert_activity_log(
+            &mut tx,
+            task_id,
+            task.creator_id,
+            "task_created",
+            None,
+            None,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1093,15 +1127,7 @@ impl TaskRepository for SqlxTaskRepository {
         let Some(row) = row else {
             return Err(TaskRepositoryError::NotFound);
         };
-        insert_activity_log(
-            &mut tx,
-            task_id,
-            actor_id,
-            "attachment_deleted",
-            None,
-            None,
-        )
-        .await?;
+        insert_activity_log(&mut tx, task_id, actor_id, "attachment_deleted", None, None).await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1116,12 +1142,25 @@ impl TaskRepository for SqlxTaskRepository {
         task: UpdateTask,
     ) -> Result<Task, TaskRepositoryError> {
         validate_date_range(task.start_date, task.due_date)?;
+        let due_date_change_reason = normalize_due_date_change_reason(task.due_date_change_reason)?;
         let assignee_ids = normalize_assignee_ids(task.assignee_id, task.assignee_ids);
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
+        let previous_due_date: Option<NaiveDate> =
+            sqlx::query_scalar("select due_date from tasks where id = $1 and archived_at is null")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| TaskRepositoryError::Database)?;
+        let Some(previous_due_date) = previous_due_date else {
+            return Err(TaskRepositoryError::NotFound);
+        };
+        if previous_due_date != task.due_date && due_date_change_reason.is_none() {
+            return Err(TaskRepositoryError::Validation);
+        }
         let row = sqlx::query(&format!(
             "with updated as (
                 update tasks set
@@ -1157,7 +1196,26 @@ impl TaskRepository for SqlxTaskRepository {
             return Err(TaskRepositoryError::NotFound);
         };
         replace_task_assignees(&mut tx, id, &assignee_ids).await?;
-        insert_activity_log(&mut tx, id, actor_id, "schedule_changed", None, None).await?;
+        let (before_value, after_value) = if previous_due_date != task.due_date {
+            (
+                Some(serde_json::json!({ "due_date": previous_due_date })),
+                Some(serde_json::json!({
+                    "due_date": task.due_date,
+                    "reason": due_date_change_reason,
+                })),
+            )
+        } else {
+            (None, None)
+        };
+        insert_activity_log(
+            &mut tx,
+            id,
+            actor_id,
+            "schedule_changed",
+            before_value,
+            after_value,
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
@@ -1522,6 +1580,79 @@ fn validate_attachment_metadata(
     Ok(())
 }
 
+fn normalize_due_date_change_reason(
+    reason: Option<String>,
+) -> Result<Option<String>, TaskRepositoryError> {
+    let Some(reason) = reason else {
+        return Ok(None);
+    };
+    let trimmed = reason.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > 500 {
+        return Err(TaskRepositoryError::Validation);
+    }
+
+    Ok(Some(trimmed.to_string()))
+}
+
+fn normalized_optional_ids(single: Option<Uuid>, many: &[Uuid]) -> Option<Vec<Uuid>> {
+    let mut ids = many.to_vec();
+    if let Some(id) = single {
+        ids.push(id);
+    }
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        None
+    } else {
+        Some(ids)
+    }
+}
+
+fn normalized_optional_statuses(
+    single: Option<TaskStatus>,
+    many: &[TaskStatus],
+) -> Option<Vec<&'static str>> {
+    let mut values = many
+        .iter()
+        .copied()
+        .map(TaskStatus::as_str)
+        .collect::<Vec<_>>();
+    if let Some(value) = single {
+        values.push(value.as_str());
+    }
+    values.sort();
+    values.dedup();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn normalized_optional_priorities(
+    single: Option<TaskPriority>,
+    many: &[TaskPriority],
+) -> Option<Vec<&'static str>> {
+    let mut values = many
+        .iter()
+        .copied()
+        .map(TaskPriority::as_str)
+        .collect::<Vec<_>>();
+    if let Some(value) = single {
+        values.push(value.as_str());
+    }
+    values.sort();
+    values.dedup();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
 fn ensure_status_transition(from: TaskStatus, to: TaskStatus) -> Result<(), TaskRepositoryError> {
     if from == to {
         return Ok(());
@@ -1553,23 +1684,41 @@ fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
             return false;
         }
     }
-    if let Some(project_id) = filter.project_id {
-        if task.project_id != project_id {
+    let project_ids = normalized_optional_ids(filter.project_id, &filter.project_ids);
+    if let Some(project_ids) = project_ids {
+        if !project_ids.contains(&task.project_id) {
             return false;
         }
     }
-    if let Some(assignee_id) = filter.assignee_id {
-        if !task.assignee_ids.contains(&assignee_id) {
+    let assignee_ids = normalized_optional_ids(filter.assignee_id, &filter.assignee_ids);
+    if let Some(assignee_ids) = assignee_ids {
+        if !task
+            .assignee_ids
+            .iter()
+            .any(|assignee_id| assignee_ids.contains(assignee_id))
+        {
             return false;
         }
     }
+    let mut statuses = filter.statuses.clone();
     if let Some(status) = filter.status {
-        if task.status != status {
+        statuses.push(status);
+    }
+    statuses.sort_by_key(|status| status.as_str());
+    statuses.dedup();
+    if !statuses.is_empty() {
+        if !statuses.contains(&task.status) {
             return false;
         }
     }
+    let mut priorities = filter.priorities.clone();
     if let Some(priority) = filter.priority {
-        if task.priority != priority {
+        priorities.push(priority);
+    }
+    priorities.sort_by_key(|priority| priority.as_str());
+    priorities.dedup();
+    if !priorities.is_empty() {
+        if !priorities.contains(&task.priority) {
             return false;
         }
     }

@@ -87,6 +87,23 @@ describe("taskWorkflow", () => {
 
     expect(canMoveTaskToStatus(task, "done", employee)).toBe(true);
     expect(filterTasks([task], { assignee_id: employee.id })).toEqual([task]);
+    expect(filterTasks([task], { assignee_ids: [employee.id] })).toEqual([task]);
+  });
+
+  it("matches multi-select project status and priority filters", () => {
+    const tasks = [
+      baseTask,
+      { ...baseTask, id: "task-2", project_id: "project-2", status: "todo" as const },
+      { ...baseTask, id: "task-3", priority: "low" as const },
+    ];
+
+    expect(
+      filterTasks(tasks, {
+        project_ids: ["project-1"],
+        statuses: ["in_progress", "blocked"],
+        priorities: ["high"],
+      }).map((task) => task.id),
+    ).toEqual(["task-1"]);
   });
 
   it("updates a task locally for optimistic kanban display", () => {

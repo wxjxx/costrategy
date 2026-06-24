@@ -875,9 +875,17 @@ fn settings_error_to_app(error: SettingsRepositoryError) -> AppError {
 struct TaskQuery {
     keyword: Option<String>,
     project_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    project_ids: Vec<uuid::Uuid>,
     assignee_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    assignee_ids: Vec<uuid::Uuid>,
     status: Option<TaskStatus>,
+    #[serde(default)]
+    statuses: Vec<TaskStatus>,
     priority: Option<TaskPriority>,
+    #[serde(default)]
+    priorities: Vec<TaskPriority>,
     date_from: Option<chrono::NaiveDate>,
     date_to: Option<chrono::NaiveDate>,
     include_archived: Option<bool>,
@@ -908,6 +916,7 @@ struct UpdateTaskRequest {
     start_date: chrono::NaiveDate,
     due_date: chrono::NaiveDate,
     description_json: serde_json::Value,
+    due_date_change_reason: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -954,9 +963,13 @@ where
             .list_tasks(TaskFilter {
                 keyword: query.keyword.clone(),
                 project_id: query.project_id,
+                project_ids: query.project_ids.clone(),
                 assignee_id: query.assignee_id,
+                assignee_ids: query.assignee_ids.clone(),
                 status: query.status,
+                statuses: query.statuses.clone(),
                 priority: query.priority,
+                priorities: query.priorities.clone(),
                 date_from: query.date_from,
                 date_to: query.date_to,
                 include_archived: query.include_archived.unwrap_or(false),
@@ -1414,6 +1427,7 @@ where
                 start_date: payload.start_date,
                 due_date: payload.due_date,
                 description_json: payload.description_json.clone(),
+                due_date_change_reason: payload.due_date_change_reason.clone(),
             },
         )
         .await

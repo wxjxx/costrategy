@@ -5,7 +5,13 @@ import {
   markAuthenticationSucceeded,
   setAuthenticatedUser,
 } from "@/auth/sessionState";
-import { api, http, redirectUnauthorizedError, setUnauthorizedRedirectHandler } from "./client";
+import {
+  api,
+  buildTaskQueryParams,
+  http,
+  redirectUnauthorizedError,
+  setUnauthorizedRedirectHandler,
+} from "./client";
 
 describe("api client", () => {
   beforeEach(() => {
@@ -18,6 +24,22 @@ describe("api client", () => {
     vi.spyOn(http, "get").mockRejectedValue(error);
 
     await expect(api.tasks()).rejects.toBe(error);
+  });
+
+  it("serializes multi-select task filters as repeated query params", () => {
+    const params = buildTaskQueryParams({
+      project_ids: ["project-1", "project-2"],
+      assignee_ids: ["user-1"],
+      statuses: ["todo", "blocked"],
+      priorities: ["high"],
+      keyword: "排期",
+    });
+
+    expect(params.getAll("project_ids")).toEqual(["project-1", "project-2"]);
+    expect(params.getAll("assignee_ids")).toEqual(["user-1"]);
+    expect(params.getAll("statuses")).toEqual(["todo", "blocked"]);
+    expect(params.getAll("priorities")).toEqual(["high"]);
+    expect(params.get("keyword")).toBe("排期");
   });
 
   it("clears cached authentication and returns home when backend session expires", async () => {

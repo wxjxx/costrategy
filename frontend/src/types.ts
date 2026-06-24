@@ -94,6 +94,7 @@ export interface TaskPayload {
   start_date: string;
   due_date: string;
   description_json: Record<string, unknown>;
+  due_date_change_reason?: string;
 }
 
 export interface TaskComment {
@@ -141,9 +142,13 @@ export interface TaskDetail {
 export interface TaskFilters {
   keyword?: string;
   project_id?: string;
+  project_ids?: string[];
   assignee_id?: string;
+  assignee_ids?: string[];
   status?: TaskStatus;
+  statuses?: TaskStatus[];
   priority?: TaskPriority;
+  priorities?: TaskPriority[];
   date_from?: string;
   date_to?: string;
 }
@@ -173,6 +178,8 @@ export interface SettingsUpdatePayload {
 }
 
 export interface DingtalkSyncLog {
+  started_at?: string;
+  finished_at?: string;
   status: "running" | "success" | "failed";
   created_users: number;
   updated_users: number;

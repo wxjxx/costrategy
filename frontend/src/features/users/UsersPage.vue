@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { Refresh, Search } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
 import UserAvatar from "@/components/UserAvatar.vue";
 import type { UserRole, UserStatus } from "@/types";
@@ -19,6 +19,7 @@ const pageSize = ref(10);
 const roleDialog = ref(false);
 const selectedUserId = ref("");
 const selectedRole = ref<UserRole>("employee");
+const selectedRows = ref<Array<{ id: string; name: string; status: UserStatus }>>([]);
 
 const filteredUsers = computed(() =>
   (users.value ?? []).filter((user) => {
@@ -51,6 +52,9 @@ const latestSyncedAt = computed(() => {
 const selectedUser = computed(() =>
   users.value?.find((user) => user.id === selectedUserId.value),
 );
+const activeSelectedRows = computed(() =>
+  selectedRows.value.filter((user) => user.status === "active"),
+);
 
 const roleMutation = useMutation({
   mutationFn: () => api.updateUserRole(selectedUserId.value, selectedRole.value),
@@ -61,6 +65,18 @@ const statusMutation = useMutation({
   mutationFn: ({ userId, status }: { userId: string; status: UserStatus }) =>
     api.updateUserStatus(userId, status),
   onSuccess: () => ElMessage.success("用户状态已更新"),
+  onSettled: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+});
+const batchDisableMutation = useMutation({
+  mutationFn: async () => {
+    await Promise.all(
+      activeSelectedRows.value.map((user) => api.updateUserStatus(user.id, "disabled")),
+    );
+  },
+  onSuccess: () => {
+    ElMessage.success("已批量停用用户");
+    selectedRows.value = [];
+  },
   onSettled: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
 });
 const syncMutation = useMutation({
@@ -84,6 +100,31 @@ function resetUserFilters() {
   role.value = "";
   status.value = "";
   currentPage.value = 1;
+}
+
+function updateSelectedRows(rows: Array<{ id: string; name: string; status: UserStatus }>) {
+  selectedRows.value = rows;
+}
+
+async function batchDisableUsers() {
+  if (activeSelectedRows.value.length === 0) {
+    ElMessage.warning("请选择正常状态的用户");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认停用选中的 ${activeSelectedRows.value.length} 个用户？`,
+      "批量停用",
+      {
+        confirmButtonText: "停用",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+    batchDisableMutation.mutate();
+  } catch {
+    // User cancelled.
+  }
 }
 </script>
 
@@ -133,12 +174,24 @@ function resetUserFilters() {
     <section class="content-card">
       <div class="section-heading">
         <h2>用户列表（共 {{ filteredUsers.length }} 人）</h2>
-        <ElButton type="primary" :loading="syncMutation.isPending.value" @click="syncMutation.mutate()">
-          <ElIcon><Refresh /></ElIcon>
-          立即同步
-        </ElButton>
+        <div class="section-actions">
+          <ElButton
+            type="danger"
+            plain
+            :disabled="activeSelectedRows.length === 0"
+            :loading="batchDisableMutation.isPending.value"
+            @click="batchDisableUsers"
+          >
+            批量停用
+          </ElButton>
+          <ElButton type="primary" :loading="syncMutation.isPending.value" @click="syncMutation.mutate()">
+            <ElIcon><Refresh /></ElIcon>
+            立即同步
+          </ElButton>
+        </div>
       </div>
-      <ElTable :data="pagedUsers">
+      <ElTable :data="pagedUsers" @selection-change="updateSelectedRows">
+        <ElTableColumn type="selection" width="48" />
         <ElTableColumn label="头像" width="88"><template #default="{ row }"><UserAvatar :name="row.name" :size="42" /></template></ElTableColumn>
         <ElTableColumn prop="name" label="姓名" width="110" />
         <ElTableColumn prop="mobile" label="手机号" width="150" />

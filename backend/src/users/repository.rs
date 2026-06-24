@@ -76,6 +76,8 @@ pub enum SyncUserOutcome {
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct SyncLogRecord {
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
     pub status: String,
     pub created_users: usize,
     pub updated_users: usize,
@@ -758,7 +760,8 @@ impl UserRepository for SqlxUserRepository {
 
     async fn list_sync_logs(&self) -> Result<Vec<SyncLogRecord>, UserRepositoryError> {
         let rows = sqlx::query(
-            "select status, created_users, updated_users, disabled_users, failure_reason
+            "select started_at, finished_at, status, created_users, updated_users,
+                    disabled_users, failure_reason
              from dingtalk_sync_logs
              order by started_at desc",
         )
@@ -769,6 +772,12 @@ impl UserRepository for SqlxUserRepository {
         rows.into_iter()
             .map(|row| {
                 Ok(SyncLogRecord {
+                    started_at: row
+                        .try_get("started_at")
+                        .map_err(|_| UserRepositoryError::Database)?,
+                    finished_at: row
+                        .try_get("finished_at")
+                        .map_err(|_| UserRepositoryError::Database)?,
                     status: row
                         .try_get("status")
                         .map_err(|_| UserRepositoryError::Database)?,

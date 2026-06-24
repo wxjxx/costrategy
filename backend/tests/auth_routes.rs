@@ -577,7 +577,9 @@ async fn dingtalk_sync_failure_is_recorded_in_sync_logs() {
     assert_eq!(logs_response.status(), StatusCode::OK);
     let logs: serde_json::Value = test::read_body_json(logs_response).await;
     assert_eq!(logs[0]["status"], "failed");
-    assert_eq!(logs[0]["failure_reason"], "dingtalk sync failed");
+    assert!(logs[0]["failure_reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("dingtalk sync failed")));
 }
 
 async fn test_app(

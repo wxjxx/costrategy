@@ -75,16 +75,28 @@ export function canMoveTaskToStatus(
 
 export function filterTasks(tasks: Task[], filters: TaskFilters): Task[] {
   const keyword = filters.keyword?.trim().toLowerCase();
+  const projectIds = selectedValues(filters.project_ids, filters.project_id);
+  const assigneeIds = selectedValues(filters.assignee_ids, filters.assignee_id);
+  const statuses = selectedValues(filters.statuses, filters.status);
+  const priorities = selectedValues(filters.priorities, filters.priority);
   return tasks.filter((task) => {
-    if (filters.project_id && task.project_id !== filters.project_id) return false;
-    if (filters.assignee_id && !taskAssigneeIds(task).includes(filters.assignee_id)) return false;
-    if (filters.status && task.status !== filters.status) return false;
-    if (filters.priority && task.priority !== filters.priority) return false;
+    if (projectIds.length && !projectIds.includes(task.project_id)) return false;
+    if (
+      assigneeIds.length &&
+      !taskAssigneeIds(task).some((assigneeId) => assigneeIds.includes(assigneeId))
+    ) return false;
+    if (statuses.length && !statuses.includes(task.status)) return false;
+    if (priorities.length && !priorities.includes(task.priority)) return false;
     if (keyword && !task.title.toLowerCase().includes(keyword)) return false;
     if (filters.date_from && task.due_date < filters.date_from) return false;
     if (filters.date_to && task.start_date > filters.date_to) return false;
     return true;
   });
+}
+
+function selectedValues<T>(many?: T[], single?: T): T[] {
+  if (many?.length) return many;
+  return single ? [single] : [];
 }
 
 export function taskAssigneeIds(task: Task): string[] {

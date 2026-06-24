@@ -78,6 +78,12 @@ http.interceptors.response.use((response) => response, redirectUnauthorizedError
 export function buildTaskQueryParams(filters: TaskFilters): URLSearchParams {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== "")
+        .forEach((item) => params.append(key, String(item)));
+      return;
+    }
     if (value !== undefined && value !== "") {
       params.set(key, String(value));
     }

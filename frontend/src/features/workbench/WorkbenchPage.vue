@@ -34,7 +34,11 @@ const tasks = computed(() => filterTasks(tasksData.value ?? [], store.filters));
 const projects = computed(() => projectsData.value ?? []);
 const users = computed(() => usersData.value ?? []);
 const isMyTasksFilterActive = computed(
-  () => Boolean(currentUser.value) && store.filters.assignee_id === currentUser.value?.id,
+  () =>
+    Boolean(currentUser.value) &&
+    selectedValues(store.filters.assignee_ids, store.filters.assignee_id).includes(
+      currentUser.value?.id ?? "",
+    ),
 );
 
 const viewTabs: Array<{ key: WorkbenchView; label: string }> = [
@@ -46,15 +50,26 @@ const viewTabs: Array<{ key: WorkbenchView; label: string }> = [
 const filterChips = computed(() => {
   const filters = store.filters;
   const chips: Array<{ key: keyof TaskFilters; label: string }> = [];
-  const project = projects.value.find((item) => item.id === filters.project_id);
-  const user = users.value.find((item) => item.id === filters.assignee_id);
-  if (project) chips.push({ key: "project_id", label: `项目：${project.name}` });
-  if (filters.status) chips.push({ key: "status", label: `状态：${statusLabel(filters.status)}` });
-  if (filters.priority) chips.push({ key: "priority", label: `优先级：${priorityLabel(filters.priority)}` });
-  if (user) chips.push({ key: "assignee_id", label: `负责人：${user.name}` });
+  const projectNames = selectedValues(filters.project_ids, filters.project_id)
+    .map((id) => projects.value.find((item) => item.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
+  const userNames = selectedValues(filters.assignee_ids, filters.assignee_id)
+    .map((id) => users.value.find((item) => item.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
+  const statusNames = selectedValues(filters.statuses, filters.status).map(statusLabel);
+  const priorityNames = selectedValues(filters.priorities, filters.priority).map(priorityLabel);
+  if (projectNames.length) chips.push({ key: "project_ids", label: `项目：${projectNames.join("、")}` });
+  if (statusNames.length) chips.push({ key: "statuses", label: `状态：${statusNames.join("、")}` });
+  if (priorityNames.length) chips.push({ key: "priorities", label: `优先级：${priorityNames.join("、")}` });
+  if (userNames.length) chips.push({ key: "assignee_ids", label: `负责人：${userNames.join("、")}` });
   if (filters.keyword) chips.push({ key: "keyword", label: `关键词：${filters.keyword}` });
   return chips;
 });
+
+function selectedValues<T>(many?: T[], single?: T): T[] {
+  if (many?.length) return many;
+  return single ? [single] : [];
+}
 
 function applyFilters(filters: TaskFilters) {
   store.setFilters(filters);
@@ -63,15 +78,17 @@ function applyFilters(filters: TaskFilters) {
 function toggleMyTasksFilter() {
   const userId = currentUser.value?.id;
   if (!userId) return;
-  if (store.filters.assignee_id === userId) {
+  const assigneeIds = selectedValues(store.filters.assignee_ids, store.filters.assignee_id);
+  if (assigneeIds.length === 1 && assigneeIds[0] === userId) {
+    store.clearFilter("assignee_ids");
     store.clearFilter("assignee_id");
     return;
   }
-  store.setFilters({ ...store.filters, assignee_id: userId });
+  store.setFilters({ ...store.filters, assignee_id: undefined, assignee_ids: [userId] });
 }
 
 function showAllByStatus(status: "todo" | "in_progress" | "blocked" | "done") {
-  store.setFilters({ ...store.filters, status });
+  store.setFilters({ ...store.filters, status: undefined, statuses: [status] });
   store.setView("list");
 }
 </script>

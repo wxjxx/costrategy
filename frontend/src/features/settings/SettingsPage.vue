@@ -262,13 +262,21 @@ function updateDebugMode(enabled: boolean) {
         <span>最近同步状态：{{ syncStatusLabel(latestSyncLog?.status) }}</span>
       </div>
       <ElTable :data="pagedSyncLogs" empty-text="暂无同步日志">
+        <ElTableColumn label="任务开始时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.started_at) }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="任务完成时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.finished_at) }}</template>
+        </ElTableColumn>
         <ElTableColumn label="同步状态">
           <template #default="{ row }">{{ syncStatusLabel(row.status) }}</template>
         </ElTableColumn>
         <ElTableColumn prop="created_users" label="新增用户数" />
         <ElTableColumn prop="updated_users" label="更新用户数" />
         <ElTableColumn prop="disabled_users" label="停用用户数" />
-        <ElTableColumn prop="failure_reason" label="失败原因" />
+        <ElTableColumn label="失败原因" min-width="240">
+          <template #default="{ row }">{{ row.failure_reason || "-" }}</template>
+        </ElTableColumn>
       </ElTable>
       <div class="table-footer">
         <ElPagination

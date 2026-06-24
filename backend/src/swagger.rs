@@ -320,6 +320,8 @@ fn components() -> Value {
                 required_prop("disabled_users", integer_schema())
             ]),
             "DingtalkSyncLog": object_schema(vec![
+                optional_prop("started_at", string_schema()),
+                optional_prop("finished_at", string_schema()),
                 required_prop("status", enum_schema(vec!["running", "success", "failed"])),
                 required_prop("created_users", integer_schema()),
                 required_prop("updated_users", integer_schema()),

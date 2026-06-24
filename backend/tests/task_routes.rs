@@ -74,6 +74,7 @@ async fn manager_can_create_edit_list_and_archive_task() {
                 "priority": "medium",
                 "start_date": "2026-06-02",
                 "due_date": "2026-06-15",
+                "due_date_change_reason": "项目排期调整",
                 "description_json": {"type": "doc", "content": []}
             }))
             .to_request(),
@@ -116,6 +117,40 @@ async fn manager_can_create_edit_list_and_archive_task() {
     .await;
     let tasks: serde_json::Value = test::read_body_json(list_after_archive).await;
     assert_eq!(tasks.as_array().unwrap().len(), 0);
+}
+
+#[actix_web::test]
+async fn updating_due_date_requires_change_reason() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let cookie = login_cookie(&app, "manager-code").await;
+    let task_id = create_task(
+        &app,
+        cookie.clone(),
+        fixture.task_payload(fixture.employee_id),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&format!("/api/tasks/{task_id}"))
+            .cookie(cookie)
+            .set_json(json!({
+                "title": "需求文档复核",
+                "project_id": fixture.project_id,
+                "assignee_id": fixture.employee_id,
+                "status": "todo",
+                "priority": "high",
+                "start_date": "2026-06-01",
+                "due_date": "2026-06-20",
+                "description_json": {"type": "doc", "content": []}
+            }))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[actix_web::test]
@@ -400,6 +435,7 @@ async fn task_create_and_assignee_change_trigger_dingtalk_personal_notifications
                 "priority": "medium",
                 "start_date": "2026-06-02",
                 "due_date": "2026-06-15",
+                "due_date_change_reason": "负责人变更后重新排期",
                 "description_json": {"type": "doc", "content": []}
             }))
             .to_request(),

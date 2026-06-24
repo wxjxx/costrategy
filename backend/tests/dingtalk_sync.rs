@@ -149,8 +149,8 @@ async fn sync_contacts_records_failed_log_when_dingtalk_call_fails() {
     assert_eq!(logs[0].created_users, 0);
     assert_eq!(logs[0].updated_users, 0);
     assert_eq!(logs[0].disabled_users, 0);
-    assert_eq!(
-        logs[0].failure_reason.as_deref(),
-        Some("dingtalk sync failed")
-    );
+    assert!(logs[0]
+        .failure_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("dingtalk sync failed")));
 }

@@ -196,6 +196,8 @@ where
         log::info!("dingtalk sync: recording success sync log");
         self.users
             .record_sync_log(SyncLogRecord {
+                started_at: None,
+                finished_at: None,
                 status: "success".to_string(),
                 created_users,
                 updated_users,
@@ -222,6 +224,7 @@ where
             ApiErrorCode::DatabaseError => "database operation failed",
             _ => "sync failed",
         };
+        let failure_reason = format!("{failure_reason}: {error}");
 
         log::info!(
             "dingtalk sync: recording failed sync log, failure_reason={}",
@@ -229,6 +232,8 @@ where
         );
         self.users
             .record_sync_log(SyncLogRecord {
+                started_at: None,
+                finished_at: None,
                 status: "failed".to_string(),
                 created_users: 0,
                 updated_users: 0,

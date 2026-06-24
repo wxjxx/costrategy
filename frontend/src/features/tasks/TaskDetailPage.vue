@@ -239,11 +239,19 @@ function openRichContentImage(event: MouseEvent) {
 }
 
 function activityTitle(log: { action: string; after_value?: Record<string, unknown> }) {
+  if (log.action === "schedule_changed" && typeof log.after_value?.due_date === "string") {
+    return `截止日期调整为${log.after_value.due_date}`;
+  }
   if (log.action !== "status_changed") return activityActionLabel(log.action);
   const targetStatus = activityStatusLabel(
     typeof log.after_value?.status === "string" ? log.after_value.status : undefined,
   );
   return targetStatus ? `更新状态为${targetStatus}` : activityActionLabel(log.action);
+}
+
+function activityReason(log: { action: string; after_value?: Record<string, unknown> }) {
+  if (log.action !== "schedule_changed") return undefined;
+  return typeof log.after_value?.reason === "string" ? log.after_value.reason : undefined;
 }
 
 async function deleteCurrentTask() {
@@ -394,6 +402,7 @@ async function deleteCurrentTask() {
             >
               <strong>{{ activityTitle(log) }}</strong>
               <p>{{ log.actor_name }}</p>
+              <p v-if="activityReason(log)" class="activity-reason">原因：{{ activityReason(log) }}</p>
             </ElTimelineItem>
           </ElTimeline>
         </article>

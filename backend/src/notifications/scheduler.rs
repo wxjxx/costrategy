@@ -18,7 +18,8 @@ where
     tokio::spawn(async move {
         loop {
             let now = shanghai_now();
-            let next_run = next_local_daily_run(now.naive_local(), NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+            let next_run =
+                next_local_daily_run(now.naive_local(), NaiveTime::from_hms_opt(9, 0, 0).unwrap());
             let sleep_for = (next_run - now)
                 .to_std()
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
@@ -42,7 +43,10 @@ where
     tokio::spawn(async move {
         loop {
             let now = shanghai_now();
-            let next_run = next_local_daily_run(now.naive_local(), NaiveTime::from_hms_opt(9, 10, 0).unwrap());
+            let next_run = next_local_daily_run(
+                now.naive_local(),
+                NaiveTime::from_hms_opt(9, 10, 0).unwrap(),
+            );
             let sleep_for = (next_run - now)
                 .to_std()
                 .unwrap_or_else(|_| std::time::Duration::from_secs(60));
@@ -54,7 +58,10 @@ where
     })
 }
 
-fn next_local_daily_run(now: NaiveDateTime, target_time: NaiveTime) -> chrono::DateTime<chrono_tz::Tz> {
+fn next_local_daily_run(
+    now: NaiveDateTime,
+    target_time: NaiveTime,
+) -> chrono::DateTime<chrono_tz::Tz> {
     let naive = next_daily_run_naive(now, target_time);
     shanghai_datetime(naive.date(), naive.time())
 }
