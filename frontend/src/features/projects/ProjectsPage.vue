@@ -5,6 +5,7 @@ import { Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
 import UserAvatar from "@/components/UserAvatar.vue";
+import { selectableUsers } from "@/features/users/userOptions";
 import type { CreateProjectPayload, Project, ProjectStatus, UpdateProjectPayload } from "@/types";
 
 const queryClient = useQueryClient();
@@ -35,6 +36,7 @@ const filteredProjects = computed(() =>
     return true;
   }),
 );
+const projectOwnerOptions = computed(() => selectableUsers(users.value ?? []));
 const pagedProjects = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;
   return filteredProjects.value.slice(start, start + pageSize.value);
@@ -152,7 +154,7 @@ function openProjectDialog(project?: Project) {
             <ElFormItem label="项目负责人">
               <ElSelect v-model="ownerId" clearable placeholder="请选择项目负责人">
                 <ElOption
-                  v-for="user in users ?? []"
+                  v-for="user in projectOwnerOptions"
                   :key="user.id"
                   :label="user.name"
                   :value="user.id"
@@ -221,7 +223,7 @@ function openProjectDialog(project?: Project) {
         <ElFormItem label="项目负责人" required>
           <ElSelect v-model="projectForm.owner_id" clearable>
             <ElOption
-              v-for="user in users ?? []"
+              v-for="user in projectOwnerOptions"
               :key="user.id"
               :label="user.name"
               :value="user.id"

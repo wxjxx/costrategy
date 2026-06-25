@@ -29,6 +29,7 @@ import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
+import { selectableUsers } from "@/features/users/userOptions";
 import { clampPage, pageRows } from "@/utils/pagination";
 import { isSvgFile } from "./fileValidation";
 import { renderDescriptionHtml } from "./richText";
@@ -48,6 +49,7 @@ const { data: detail } = useQuery({
 });
 const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: api.projects });
 const { data: users } = useQuery({ queryKey: ["users"], queryFn: api.users });
+const assigneeOptions = computed(() => selectableUsers(users.value ?? []));
 const uploadInput = ref<HTMLInputElement>();
 const editorImageInput = ref<HTMLInputElement>();
 const pendingFiles = ref<File[]>([]);
@@ -392,7 +394,7 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
                 placeholder="请选择负责人"
               >
                 <ElOption
-                  v-for="user in users ?? []"
+                  v-for="user in assigneeOptions"
                   :key="user.id"
                   :label="user.name"
                   :value="user.id"

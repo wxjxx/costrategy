@@ -211,6 +211,82 @@ async fn manager_can_create_filter_and_update_blocked_task() {
 }
 
 #[actix_web::test]
+async fn task_list_accepts_multi_select_filter_params() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "命中的阻塞任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "blocked",
+            "priority": "high",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-10",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "另一个命中任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.other_id,
+            "status": "todo",
+            "priority": "high",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-10",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+    create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "低优先级任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "todo",
+            "priority": "low",
+            "start_date": "2026-06-01",
+            "due_date": "2026-06-10",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!(
+                "/api/tasks?project_ids={}&assignee_ids={}&assignee_ids={}&statuses=blocked&statuses=todo&priorities=high",
+                fixture.project_id, fixture.employee_id, fixture.other_id
+            ))
+            .cookie(manager_cookie)
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let tasks: serde_json::Value = test::read_body_json(response).await;
+    let mut titles = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["title"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    titles.sort();
+    assert_eq!(titles, vec!["另一个命中任务", "命中的阻塞任务"]);
+}
+
+#[actix_web::test]
 async fn task_creator_or_manager_can_delete_task() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;

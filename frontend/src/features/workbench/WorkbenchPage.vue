@@ -10,6 +10,7 @@ import TaskGanttView from "./TaskGanttView.vue";
 import TaskKanbanView from "./TaskKanbanView.vue";
 import TaskListView from "./TaskListView.vue";
 import { filterTasks, priorityLabel, statusLabel } from "@/features/tasks/taskWorkflow";
+import { selectableUsers } from "@/features/users/userOptions";
 import type { TaskFilters } from "@/types";
 
 const router = useRouter();
@@ -33,6 +34,7 @@ const { data: usersData } = useQuery({ queryKey: ["users"], queryFn: api.users }
 const tasks = computed(() => filterTasks(tasksData.value ?? [], store.filters));
 const projects = computed(() => projectsData.value ?? []);
 const users = computed(() => usersData.value ?? []);
+const assigneeOptions = computed(() => selectableUsers(usersData.value ?? []));
 const isMyTasksFilterActive = computed(
   () =>
     Boolean(currentUser.value) &&
@@ -159,7 +161,7 @@ function showAllByStatus(status: "todo" | "in_progress" | "blocked" | "done") {
       v-model="showFilters"
       :filters="store.filters"
       :projects="projects"
-      :users="users"
+      :users="assigneeOptions"
       @apply="applyFilters"
       @reset="store.resetFilters"
     />

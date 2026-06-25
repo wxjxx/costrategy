@@ -892,6 +892,97 @@ struct TaskQuery {
     sort: Option<String>,
 }
 
+impl TaskQuery {
+    fn from_query_string(query_string: &str) -> Result<Self, AppError> {
+        let mut query = Self {
+            keyword: None,
+            project_id: None,
+            project_ids: Vec::new(),
+            assignee_id: None,
+            assignee_ids: Vec::new(),
+            status: None,
+            statuses: Vec::new(),
+            priority: None,
+            priorities: Vec::new(),
+            date_from: None,
+            date_to: None,
+            include_archived: None,
+            sort: None,
+        };
+
+        for pair in query_string.split('&').filter(|pair| !pair.is_empty()) {
+            let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+            let key = raw_key.strip_suffix("[]").unwrap_or(raw_key);
+            let value = decode_query_value(raw_value)?;
+            if value.is_empty() {
+                continue;
+            }
+
+            match key {
+                "keyword" => query.keyword = Some(value),
+                "project_id" => query.project_id = Some(parse_query_value(&value)?),
+                "project_ids" => {
+                    query
+                        .project_ids
+                        .extend(parse_query_values::<uuid::Uuid>(&value)?);
+                }
+                "assignee_id" => query.assignee_id = Some(parse_query_value(&value)?),
+                "assignee_ids" => {
+                    query
+                        .assignee_ids
+                        .extend(parse_query_values::<uuid::Uuid>(&value)?);
+                }
+                "status" => query.status = Some(parse_query_value(&value)?),
+                "statuses" => query
+                    .statuses
+                    .extend(parse_query_values::<TaskStatus>(&value)?),
+                "priority" => query.priority = Some(parse_query_value(&value)?),
+                "priorities" => query
+                    .priorities
+                    .extend(parse_query_values::<TaskPriority>(&value)?),
+                "date_from" => query.date_from = Some(parse_query_date(&value)?),
+                "date_to" => query.date_to = Some(parse_query_date(&value)?),
+                "include_archived" => query.include_archived = Some(parse_query_value(&value)?),
+                "sort" => query.sort = Some(value),
+                _ => {}
+            }
+        }
+
+        Ok(query)
+    }
+}
+
+fn decode_query_value(value: &str) -> Result<String, AppError> {
+    urlencoding::decode(&value.replace('+', " "))
+        .map(|value| value.into_owned())
+        .map_err(|_| AppError::bad_request(ApiErrorCode::ValidationFailed))
+}
+
+fn parse_query_value<T>(value: &str) -> Result<T, AppError>
+where
+    T: std::str::FromStr,
+{
+    value
+        .parse()
+        .map_err(|_| AppError::bad_request(ApiErrorCode::ValidationFailed))
+}
+
+fn parse_query_values<T>(value: &str) -> Result<Vec<T>, AppError>
+where
+    T: std::str::FromStr,
+{
+    value
+        .split(',')
+        .filter(|item| !item.is_empty())
+        .map(parse_query_value)
+        .collect()
+}
+
+fn parse_query_date(value: &str) -> Result<chrono::NaiveDate, AppError> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| AppError::bad_request(ApiErrorCode::ValidationFailed))
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct CreateTaskRequest {
     project_id: uuid::Uuid,
@@ -944,7 +1035,6 @@ async fn list_tasks<C, R, T>(
     state: web::Data<AppState<C, R>>,
     tasks: web::Data<T>,
     request: HttpRequest,
-    query: web::Query<TaskQuery>,
 ) -> Result<HttpResponse, AppError>
 where
     C: DingTalkClient,
@@ -952,6 +1042,7 @@ where
     T: TaskRepository,
 {
     require_current_user(&state, &request)?;
+    let query = TaskQuery::from_query_string(request.query_string())?;
     let sort = query
         .sort
         .as_deref()
