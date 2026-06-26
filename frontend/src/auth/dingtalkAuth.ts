@@ -1,3 +1,4 @@
+import bundledDingtalkJsApi from "dingtalk-jsapi";
 import type { CurrentUser } from "@/types";
 
 type DingtalkAuthCodeResult = { code?: string; authCode?: string };
@@ -118,8 +119,8 @@ function getDingtalkJsApi(): DingtalkJsApi | undefined {
   return typeof window === "undefined" ? undefined : (window as DingtalkWindow).dd;
 }
 
-async function loadDingtalkJsApiFromPackage(): Promise<DingtalkJsApi | undefined> {
-  const imported = (await import("dingtalk-jsapi")) as unknown as {
+function loadDingtalkJsApiFromPackage(): DingtalkJsApi | undefined {
+  const imported = bundledDingtalkJsApi as unknown as {
     default?: DingtalkJsApi;
   } & DingtalkJsApi;
   return imported.default ?? imported;
@@ -266,7 +267,7 @@ export async function requestDingtalkAuthCode(options: {
 } = {}): Promise<string> {
   let dd = options.dd ?? getDingtalkJsApi();
   if (!dd) {
-    console.info("[auth:dingtalk] DingTalk JSAPI not found on window, loading npm package");
+    console.info("[auth:dingtalk] DingTalk JSAPI not found on window, using bundled npm package");
     dd = await (options.loadDd ?? loadDingtalkJsApiFromPackage)();
   }
   const locationSearch = options.locationSearch ?? getCurrentSearch();

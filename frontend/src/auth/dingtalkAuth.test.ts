@@ -169,4 +169,28 @@ describe("dingtalk auth", () => {
     expect(dingtalkLogin).toHaveBeenCalledWith("auth-code-1");
     expect(me).toHaveBeenNthCalledWith(2, { skipUnauthorizedRedirect: true });
   });
+
+  it("resolves the DingTalk JSAPI package when the auth module loads", async () => {
+    vi.resetModules();
+    let packageLoaded = false;
+    const requestAuthCode = vi.fn().mockResolvedValue({ code: "auth-code-from-bundled-package" });
+    vi.doMock("dingtalk-jsapi", () => {
+      packageLoaded = true;
+      return { default: { requestAuthCode } };
+    });
+
+    try {
+      const module = await import("./dingtalkAuth");
+
+      expect(packageLoaded).toBe(true);
+      await expect(
+        module.requestDingtalkAuthCode({
+          locationSearch: "?clientId=client-id-1&corpid=ding-corp-1",
+        }),
+      ).resolves.toBe("auth-code-from-bundled-package");
+    } finally {
+      vi.doUnmock("dingtalk-jsapi");
+      vi.resetModules();
+    }
+  });
 });
