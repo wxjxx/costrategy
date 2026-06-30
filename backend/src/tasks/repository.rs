@@ -268,6 +268,7 @@ struct StoredTask {
     priority: TaskPriority,
     start_date: NaiveDate,
     due_date: NaiveDate,
+    completed_is_overdue: Option<bool>,
     description_json: Value,
     creator_id: Uuid,
     updated_at: DateTime<Utc>,
@@ -433,6 +434,7 @@ impl TaskRepository for MemoryTaskRepository {
             priority: task.priority,
             start_date: task.start_date,
             due_date: task.due_date,
+            completed_is_overdue: completed_overdue_for_create(task.status, task.due_date),
             description_json: task.description_json,
             creator_id: task.creator_id,
             updated_at: Utc::now(),
@@ -595,6 +597,7 @@ impl TaskRepository for MemoryTaskRepository {
             return Err(TaskRepositoryError::NotFound);
         };
         let previous_due_date = existing.due_date;
+        let previous_status = existing.status;
         let new_due_date = task.due_date;
         if previous_due_date != task.due_date && due_date_change_reason.is_none() {
             return Err(TaskRepositoryError::Validation);
@@ -608,6 +611,12 @@ impl TaskRepository for MemoryTaskRepository {
         existing.priority = task.priority;
         existing.start_date = task.start_date;
         existing.due_date = task.due_date;
+        existing.completed_is_overdue = completed_overdue_for_update(
+            previous_status,
+            task.status,
+            existing.completed_is_overdue,
+            task.due_date,
+        );
         existing.description_json = task.description_json;
         existing.updated_at = Utc::now();
         let cloned = existing.clone();
@@ -648,6 +657,12 @@ impl TaskRepository for MemoryTaskRepository {
         ensure_status_transition(existing.status, status)?;
         let before_status = existing.status;
         existing.status = status;
+        existing.completed_is_overdue = completed_overdue_for_update(
+            before_status,
+            status,
+            existing.completed_is_overdue,
+            existing.due_date,
+        );
         existing.updated_at = Utc::now();
         let cloned = existing.clone();
         state.activity_logs.push(MemoryActivityLog {
@@ -716,6 +731,7 @@ impl MemoryTaskRepository {
             priority: task.priority,
             start_date: task.start_date,
             due_date: task.due_date,
+            completed_is_overdue: completed_overdue_for_create(task.status, task.due_date),
             description_json: task.description_json,
             creator_id: task.creator_id,
             updated_at: Utc::now(),
@@ -757,7 +773,7 @@ fn task_select_sql(from_clause: &str) -> String {
                     where ta.task_id = t.id
                 ) as assignee_names,
                 t.status, t.priority, t.start_date, t.due_date, t.description_json, t.updated_at,
-                t.creator_id, creator.name as creator_name, t.archived_at
+                t.completed_is_overdue, t.creator_id, creator.name as creator_name, t.archived_at
          {from_clause}
          join projects p on p.id = t.project_id
          join users u on u.id = t.assignee_id
@@ -928,11 +944,16 @@ impl TaskRepository for SqlxTaskRepository {
             "with inserted as (
                 insert into tasks (
                     id, project_id, title, assignee_id, status, priority, start_date, due_date,
-                    description_json, creator_id, updated_at
+                    description_json, creator_id, completed_is_overdue, updated_at
                 )
-                values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+                values (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    case when $5 = 'done' then (timezone('Asia/Shanghai', now())::date > $8) else null end,
+                    now()
+                )
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, updated_at, archived_at
+                          due_date, completed_is_overdue, description_json, creator_id, updated_at,
+                          archived_at
              )
              {}",
             task_select_sql("from inserted t"),
@@ -1172,10 +1193,16 @@ impl TaskRepository for SqlxTaskRepository {
                     start_date = $7,
                     due_date = $8,
                     description_json = $9,
+                    completed_is_overdue = case
+                        when $5 = 'done' and status <> 'done' then (timezone('Asia/Shanghai', now())::date > $8)
+                        when $5 = 'done' then completed_is_overdue
+                        else null
+                    end,
                     updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, updated_at, archived_at
+                          due_date, completed_is_overdue, description_json, creator_id, updated_at,
+                          archived_at
              )
              {}",
             task_select_sql("from updated t"),
@@ -1252,10 +1279,18 @@ impl TaskRepository for SqlxTaskRepository {
 
         let row = sqlx::query(&format!(
             "with updated as (
-                update tasks set status = $2, updated_at = now()
+                update tasks set
+                    status = $2,
+                    completed_is_overdue = case
+                        when $2 = 'done' and status <> 'done' then (timezone('Asia/Shanghai', now())::date > due_date)
+                        when $2 = 'done' then completed_is_overdue
+                        else null
+                    end,
+                    updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, updated_at, archived_at
+                          due_date, completed_is_overdue, description_json, creator_id, updated_at,
+                          archived_at
              )
              {}",
             task_select_sql("from updated t"),
@@ -1291,7 +1326,8 @@ impl TaskRepository for SqlxTaskRepository {
                 update tasks set archived_at = now(), updated_at = now()
                 where id = $1 and archived_at is null
                 returning id, project_id, title, assignee_id, status, priority, start_date,
-                          due_date, description_json, creator_id, updated_at, archived_at
+                          due_date, completed_is_overdue, description_json, creator_id, updated_at,
+                          archived_at
              )
              {}",
             task_select_sql("from archived t"),
@@ -1313,7 +1349,12 @@ impl TaskRepository for SqlxTaskRepository {
 
 impl From<StoredTask> for Task {
     fn from(task: StoredTask) -> Self {
-        let is_overdue = compute_overdue(task.status, task.due_date);
+        let is_overdue = compute_overdue(
+            task.status,
+            task.due_date,
+            task.completed_is_overdue,
+            shanghai_today(),
+        );
         Self {
             id: task.id,
             project_id: task.project_id,
@@ -1790,7 +1831,10 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
     let due_date = row
         .try_get("due_date")
         .map_err(|_| TaskRepositoryError::Database)?;
-    let is_overdue = compute_overdue(status, due_date);
+    let completed_is_overdue = row
+        .try_get("completed_is_overdue")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let is_overdue = compute_overdue(status, due_date, completed_is_overdue, shanghai_today());
     let assignee_id: Uuid = row
         .try_get("assignee_id")
         .map_err(|_| TaskRepositoryError::Database)?;
@@ -2023,10 +2067,59 @@ async fn insert_activity_log(
     Ok(())
 }
 
-fn compute_overdue(_status: TaskStatus, due_date: NaiveDate) -> bool {
-    shanghai_today() > due_date
+fn completed_overdue_for_create(status: TaskStatus, due_date: NaiveDate) -> Option<bool> {
+    (status == TaskStatus::Done).then(|| shanghai_today() > due_date)
+}
+
+fn completed_overdue_for_update(
+    previous_status: TaskStatus,
+    next_status: TaskStatus,
+    current_completed_is_overdue: Option<bool>,
+    due_date: NaiveDate,
+) -> Option<bool> {
+    match (previous_status, next_status) {
+        (TaskStatus::Done, TaskStatus::Done) => current_completed_is_overdue,
+        (_, TaskStatus::Done) => Some(shanghai_today() > due_date),
+        _ => None,
+    }
+}
+
+fn compute_overdue(
+    status: TaskStatus,
+    due_date: NaiveDate,
+    completed_is_overdue: Option<bool>,
+    today: NaiveDate,
+) -> bool {
+    if status == TaskStatus::Done {
+        return completed_is_overdue.unwrap_or(today > due_date);
+    }
+    today > due_date
 }
 
 fn display_status(status: TaskStatus, _is_overdue: bool) -> &'static str {
     status.as_str()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn done_task_overdue_state_is_frozen_at_completion_date() {
+        let due_date = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+        let after_due_date = NaiveDate::from_ymd_opt(2026, 7, 3).unwrap();
+        assert!(!compute_overdue(
+            TaskStatus::Done,
+            due_date,
+            Some(false),
+            after_due_date,
+        ));
+        assert!(compute_overdue(
+            TaskStatus::Done,
+            due_date,
+            Some(true),
+            after_due_date,
+        ));
+    }
 }

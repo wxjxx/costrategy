@@ -698,6 +698,65 @@ async fn task_list_marks_past_due_tasks_as_overdue_without_changing_status() {
 }
 
 #[actix_web::test]
+async fn completed_task_keeps_overdue_state_after_due_date_changes() {
+    let fixture = TaskRouteFixture::new().await;
+    let app = task_test_app(&fixture).await;
+    let manager_cookie = login_cookie(&app, "manager-code").await;
+    let task_id = create_task(
+        &app,
+        manager_cookie.clone(),
+        json!({
+            "title": "按时完成任务",
+            "project_id": fixture.project_id,
+            "assignee_id": fixture.employee_id,
+            "status": "todo",
+            "priority": "medium",
+            "start_date": "2026-06-01",
+            "due_date": "2099-01-01",
+            "description_json": {"type": "doc", "content": []}
+        }),
+    )
+    .await;
+
+    let complete_response = test::call_service(
+        &app,
+        test::TestRequest::patch()
+            .uri(&format!("/api/tasks/{task_id}/status"))
+            .cookie(manager_cookie.clone())
+            .set_json(json!({ "status": "done" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(complete_response.status(), StatusCode::OK);
+    let completed: serde_json::Value = test::read_body_json(complete_response).await;
+    assert_eq!(completed["is_overdue"], false);
+
+    let update_response = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&format!("/api/tasks/{task_id}"))
+            .cookie(manager_cookie.clone())
+            .set_json(json!({
+                "title": "按时完成任务",
+                "project_id": fixture.project_id,
+                "assignee_id": fixture.employee_id,
+                "status": "done",
+                "priority": "medium",
+                "start_date": "2026-01-01",
+                "due_date": "2026-01-02",
+                "due_date_change_reason": "验证完成态延期状态冻结",
+                "description_json": {"type": "doc", "content": []}
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let updated: serde_json::Value = test::read_body_json(update_response).await;
+    assert_eq!(updated["status"], "done");
+    assert_eq!(updated["is_overdue"], false);
+}
+
+#[actix_web::test]
 async fn logged_in_user_can_read_task_detail_and_add_plain_text_comment() {
     let fixture = TaskRouteFixture::new().await;
     let app = task_test_app(&fixture).await;
