@@ -61,15 +61,28 @@ export function moveTaskForDisplay(
   );
 }
 
+export function mergeTaskPreservingSubtasks(currentTask: Task, nextTask: Task): Task {
+  if (nextTask.subtasks !== undefined || currentTask.subtasks === undefined) {
+    return nextTask;
+  }
+  return { ...nextTask, subtasks: currentTask.subtasks };
+}
+
 export function canManageTasks(user: CurrentUser): boolean {
   return user.role === "manager" || user.role === "admin";
 }
 
 export function canMoveTaskToStatus(
   task: Task,
-  _targetStatus: DisplayStatus,
+  targetStatus: DisplayStatus,
   user: CurrentUser,
-): _targetStatus is TaskStatus {
+): targetStatus is TaskStatus {
+  if (
+    targetStatus === "done" &&
+    task.subtasks?.some((subtask) => subtask.status !== "done")
+  ) {
+    return false;
+  }
   return canManageTasks(user) || taskAssigneeIds(task).includes(user.id);
 }
 

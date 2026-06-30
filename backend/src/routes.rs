@@ -15,8 +15,8 @@ use crate::settings::{
 };
 use crate::storage::{AttachmentStorage, StorageError};
 use crate::tasks::{
-    CreateTask, CreateTaskAttachment, CreateTaskComment, TaskFilter, TaskPriority, TaskRepository,
-    TaskRepositoryError, TaskSort, TaskStatus, UpdateTask,
+    CreateSubtask, CreateTask, CreateTaskAttachment, CreateTaskComment, TaskFilter, TaskPriority,
+    TaskRepository, TaskRepositoryError, TaskSort, TaskStatus, UpdateSubtask, UpdateTask,
 };
 use crate::users::{NewUser, UserRepository, UserRepositoryError, UserStatus};
 use actix_multipart::Multipart;
@@ -136,6 +136,18 @@ where
         .route(
             "/api/tasks/{task_id}/status",
             web::patch().to(update_task_status::<C, R, T>),
+        )
+        .route(
+            "/api/tasks/{task_id}/subtasks",
+            web::post().to(create_subtask::<C, R, T>),
+        )
+        .route(
+            "/api/tasks/{task_id}/subtasks/{subtask_id}",
+            web::put().to(update_subtask::<C, R, T>),
+        )
+        .route(
+            "/api/tasks/{task_id}/subtasks/{subtask_id}",
+            web::delete().to(delete_subtask::<C, R, T>),
         )
         .route(
             "/api/tasks/{task_id}/archive",
@@ -1016,6 +1028,20 @@ struct UpdateTaskStatusRequest {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct CreateSubtaskRequest {
+    assignee_id: uuid::Uuid,
+    status: TaskStatus,
+    description: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateSubtaskRequest {
+    assignee_id: uuid::Uuid,
+    status: TaskStatus,
+    description: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct CreateTaskCommentRequest {
     content: String,
 }
@@ -1568,6 +1594,83 @@ where
     Ok(HttpResponse::Ok().json(
         tasks
             .update_task_status(path.into_inner(), current_user.id, payload.status)
+            .await
+            .map_err(task_error_to_app)?,
+    ))
+}
+
+async fn create_subtask<C, R, T>(
+    state: web::Data<AppState<C, R>>,
+    tasks: web::Data<T>,
+    request: HttpRequest,
+    path: web::Path<uuid::Uuid>,
+    payload: web::Json<CreateSubtaskRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    T: TaskRepository,
+{
+    require_task_manager(&state, &request, Permission::EditTaskCoreFields)?;
+    Ok(HttpResponse::Ok().json(
+        tasks
+            .create_subtask(CreateSubtask {
+                task_id: path.into_inner(),
+                assignee_id: payload.assignee_id,
+                status: payload.status,
+                description: payload.description.clone(),
+            })
+            .await
+            .map_err(task_error_to_app)?,
+    ))
+}
+
+async fn update_subtask<C, R, T>(
+    state: web::Data<AppState<C, R>>,
+    tasks: web::Data<T>,
+    request: HttpRequest,
+    path: web::Path<(uuid::Uuid, uuid::Uuid)>,
+    payload: web::Json<UpdateSubtaskRequest>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    T: TaskRepository,
+{
+    require_task_manager(&state, &request, Permission::EditTaskCoreFields)?;
+    let (task_id, subtask_id) = path.into_inner();
+    Ok(HttpResponse::Ok().json(
+        tasks
+            .update_subtask(
+                task_id,
+                subtask_id,
+                UpdateSubtask {
+                    assignee_id: payload.assignee_id,
+                    status: payload.status,
+                    description: payload.description.clone(),
+                },
+            )
+            .await
+            .map_err(task_error_to_app)?,
+    ))
+}
+
+async fn delete_subtask<C, R, T>(
+    state: web::Data<AppState<C, R>>,
+    tasks: web::Data<T>,
+    request: HttpRequest,
+    path: web::Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<HttpResponse, AppError>
+where
+    C: DingTalkClient,
+    R: UserRepository,
+    T: TaskRepository,
+{
+    require_task_manager(&state, &request, Permission::EditTaskCoreFields)?;
+    let (task_id, subtask_id) = path.into_inner();
+    Ok(HttpResponse::Ok().json(
+        tasks
+            .delete_subtask(task_id, subtask_id)
             .await
             .map_err(task_error_to_app)?,
     ))

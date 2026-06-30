@@ -77,6 +77,7 @@ export interface Task {
   archived: boolean;
   is_overdue: boolean;
   display_status: string;
+  subtasks?: TaskSubtask[];
 }
 
 export interface TaskAssignee {
@@ -95,6 +96,24 @@ export interface TaskPayload {
   due_date: string;
   description_json: Record<string, unknown>;
   due_date_change_reason?: string;
+}
+
+export interface TaskSubtask {
+  id: string;
+  task_id: string;
+  assignee_id: string;
+  assignee_name?: string;
+  status: TaskStatus;
+  description: string;
+  updated_at: string;
+  is_overdue: boolean;
+  display_status: string;
+}
+
+export interface TaskSubtaskPayload {
+  assignee_id: string;
+  status: TaskStatus;
+  description: string;
 }
 
 export interface TaskComment {

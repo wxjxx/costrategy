@@ -16,6 +16,8 @@ import type {
   TaskDetail,
   TaskFilters,
   TaskPayload,
+  TaskSubtask,
+  TaskSubtaskPayload,
   TaskStatus,
   UpdateProjectPayload,
   User,
@@ -120,6 +122,18 @@ export const api = {
     (await http.put(`/tasks/${taskId}`, payload)).data,
   deleteTask: async (taskId: string): Promise<Task> =>
     (await http.delete(`/tasks/${taskId}`)).data,
+  createSubtask: async (
+    taskId: string,
+    payload: TaskSubtaskPayload,
+  ): Promise<TaskSubtask> => (await http.post(`/tasks/${taskId}/subtasks`, payload)).data,
+  updateSubtask: async (
+    taskId: string,
+    subtaskId: string,
+    payload: TaskSubtaskPayload,
+  ): Promise<TaskSubtask> =>
+    (await http.put(`/tasks/${taskId}/subtasks/${subtaskId}`, payload)).data,
+  deleteSubtask: async (taskId: string, subtaskId: string): Promise<TaskSubtask> =>
+    (await http.delete(`/tasks/${taskId}/subtasks/${subtaskId}`)).data,
   projects: async (): Promise<Project[]> => (await http.get("/projects")).data,
   createProject: async (payload: CreateProjectPayload): Promise<Project> =>
     (await http.post("/projects", payload)).data,

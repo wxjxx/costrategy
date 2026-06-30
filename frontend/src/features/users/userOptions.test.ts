@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { User } from "@/types";
-import { selectableUsers } from "./userOptions";
+import { projectOwnerUsers, selectableUsers } from "./userOptions";
 
 const activeUser: User = {
   id: "user-1",
@@ -21,5 +21,12 @@ const disabledUser: User = {
 describe("userOptions", () => {
   it("only exposes active users for project and task selectors", () => {
     expect(selectableUsers([activeUser, disabledUser])).toEqual([activeUser]);
+  });
+
+  it("keeps disabled users available for project owner selectors", () => {
+    expect(projectOwnerUsers([activeUser, disabledUser])).toEqual([
+      activeUser,
+      disabledUser,
+    ]);
   });
 });

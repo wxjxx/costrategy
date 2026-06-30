@@ -2,9 +2,7 @@ use actix_web::{web, App, HttpServer};
 use costrategy_backend::app_state::AppState;
 use costrategy_backend::auth::SessionStore;
 use costrategy_backend::config::AppConfig;
-use costrategy_backend::dingtalk::{
-    start_contact_sync_scheduler, ConfiguredDingTalkClient, DingtalkSyncService,
-};
+use costrategy_backend::dingtalk::ConfiguredDingTalkClient;
 use costrategy_backend::logging::{init_logging, request_logger};
 use costrategy_backend::notifications::{
     start_due_tomorrow_scheduler, start_overdue_scheduler, ReminderNotificationService,
@@ -47,15 +45,13 @@ async fn main() -> std::io::Result<()> {
             notifications.clone(),
             tasks.clone(),
         );
-        let sync_service = DingtalkSyncService::new(dingtalk.clone(), users.clone());
         (
             start_due_tomorrow_scheduler(reminder_service.clone()),
             start_overdue_scheduler(reminder_service),
-            start_contact_sync_scheduler(sync_service),
         )
     });
     if dingtalk_configured {
-        log::info!("started dingtalk and notification background schedulers");
+        log::info!("started notification background schedulers; dingtalk contacts sync is manual");
     } else {
         log::info!("dingtalk configuration is not set; background schedulers are disabled");
     }

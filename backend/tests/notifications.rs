@@ -253,5 +253,6 @@ fn task(assignee_id: Uuid, assignee_name: Option<String>) -> Task {
         archived: false,
         is_overdue: false,
         display_status: "todo".to_string(),
+        subtasks: Vec::new(),
     }
 }

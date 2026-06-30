@@ -5,7 +5,7 @@ import { Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "@/api/client";
 import UserAvatar from "@/components/UserAvatar.vue";
-import { selectableUsers } from "@/features/users/userOptions";
+import { projectOwnerUsers } from "@/features/users/userOptions";
 import type { CreateProjectPayload, Project, ProjectStatus, UpdateProjectPayload } from "@/types";
 
 const queryClient = useQueryClient();
@@ -36,7 +36,7 @@ const filteredProjects = computed(() =>
     return true;
   }),
 );
-const projectOwnerOptions = computed(() => selectableUsers(users.value ?? []));
+const projectOwnerOptions = computed(() => projectOwnerUsers(users.value ?? []));
 const pagedProjects = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;
   return filteredProjects.value.slice(start, start + pageSize.value);
@@ -53,6 +53,10 @@ watch(filteredProjects, (items) => {
 
 function ownerName(ownerIdValue?: string): string {
   return users.value?.find((user) => user.id === ownerIdValue)?.name ?? "-";
+}
+
+function ownerAvatar(ownerIdValue?: string): string | undefined {
+  return users.value?.find((user) => user.id === ownerIdValue)?.avatar_url;
 }
 
 function statusText(value: ProjectStatus): string {
@@ -185,7 +189,7 @@ function openProjectDialog(project?: Project) {
         </ElTableColumn>
         <ElTableColumn label="项目负责人" width="180">
           <template #default="{ row }">
-            <span class="table-user"><UserAvatar :name="ownerName(row.owner_id)" />{{ ownerName(row.owner_id) }}</span>
+            <span class="table-user"><UserAvatar :name="ownerName(row.owner_id)" :src="ownerAvatar(row.owner_id)" />{{ ownerName(row.owner_id) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="项目描述" prop="description" min-width="320" />

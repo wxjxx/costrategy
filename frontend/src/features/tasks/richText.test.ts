@@ -40,4 +40,29 @@ describe("renderDescriptionHtml", () => {
       }),
     ).toBe('<img src="/api/rich-text/images/image-1.png">');
   });
+
+  it("renders task list content from Tiptap JSON", () => {
+    expect(
+      renderDescriptionHtml({
+        type: "doc",
+        content: [
+          {
+            type: "taskList",
+            content: [
+              {
+                type: "taskItem",
+                attrs: { checked: true },
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: "完成方案" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toContain("完成方案");
+  });
 });

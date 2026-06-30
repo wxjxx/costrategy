@@ -134,4 +134,57 @@ describe("taskGantt", () => {
 
     expect(ganttTasks.some((item) => item.id === "task-2")).toBe(false);
   });
+
+  it("renders subtasks under their parent task and keeps their overdue flags independent", () => {
+    const parent: Task = {
+      ...task,
+      id: "task-parent",
+      title: "父任务",
+      is_overdue: true,
+      subtasks: [
+        {
+          id: "subtask-1",
+          task_id: "task-parent",
+          assignee_id: "user-1",
+          assignee_name: "李四",
+          status: "done",
+          description: "按时完成的子任务",
+          is_overdue: false,
+          display_status: "done",
+          updated_at: "2026-06-09T09:30:00Z",
+        },
+        {
+          id: "subtask-2",
+          task_id: "task-parent",
+          assignee_id: "user-2",
+          assignee_name: "王五",
+          status: "in_progress",
+          description: "延期的子任务",
+          is_overdue: true,
+          display_status: "in_progress",
+          updated_at: "2026-06-10T09:30:00Z",
+        },
+      ],
+    };
+
+    const ganttTasks = buildGanttTasks([parent], "project");
+    const parentRow = ganttTasks.find((item) => item.id === "task-parent");
+    const onTimeSubtask = ganttTasks.find((item) => item.id === "subtask-subtask-1");
+    const overdueSubtask = ganttTasks.find((item) => item.id === "subtask-subtask-2");
+
+    expect(parentRow).toMatchObject({
+      parent: "project-project-1",
+      open: true,
+      rowKind: "task",
+    });
+    expect(onTimeSubtask).toMatchObject({
+      parent: "task-parent",
+      rowKind: "subtask",
+      assigneeText: "李四",
+    });
+    expect(onTimeSubtask?.text).not.toContain("gantt-overdue-badge");
+    expect(overdueSubtask?.text).toContain("gantt-overdue-badge");
+    expect(shouldToggleProjectRowFromClick(parentRow!, false)).toBe(true);
+    expect(taskDetailPathFromGanttTask(onTimeSubtask!)).toBeUndefined();
+  });
 });

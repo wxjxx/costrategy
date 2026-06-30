@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { ElMessage } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
@@ -36,6 +36,7 @@ const activeNotificationTab = ref<"unread" | "read">("unread");
 const profileDialogOpen = ref(false);
 const profileAvatarUrl = ref("");
 const avatarFileInput = ref<HTMLInputElement>();
+const notificationMenu = ref<HTMLElement>();
 const pageTitle = computed(() => String(route.meta.title ?? "工作台"));
 const unreadNotifications = computed(() =>
   (myNotifications.value ?? []).filter((record) => !record.read_at),
@@ -56,6 +57,10 @@ const saveAvatarMutation = useMutation({
   mutationFn: (avatarUrl: string) => api.updateMyAvatar(avatarUrl),
   onSuccess: (updatedUser) => {
     queryClient.setQueryData(["me"], updatedUser);
+    void queryClient.invalidateQueries({ queryKey: ["users"] });
+    void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    void queryClient.invalidateQueries({ queryKey: ["task-detail"] });
     profileDialogOpen.value = false;
     ElMessage.success("头像已更新");
   },
@@ -81,8 +86,23 @@ watch(
   { immediate: true },
 );
 
+onMounted(() => {
+  document.addEventListener("click", closeNotificationPanelOnOutsideClick);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", closeNotificationPanelOnOutsideClick);
+});
+
 function toggleNotificationPanel() {
   notificationPanelOpen.value = !notificationPanelOpen.value;
+}
+
+function closeNotificationPanelOnOutsideClick(event: MouseEvent) {
+  if (!notificationPanelOpen.value) return;
+  const target = event.target;
+  if (target instanceof Node && notificationMenu.value?.contains(target)) return;
+  notificationPanelOpen.value = false;
 }
 
 function toggleSidebar() {
@@ -196,54 +216,58 @@ async function openNotification(record: NotificationRecord) {
           <h1>{{ pageTitle }}</h1>
         </div>
         <div class="header-actions">
-          <button
-            class="icon-button with-badge notification-trigger"
-            type="button"
-            :aria-label="`通知${notificationCount ? `（${notificationCount}）` : ''}`"
-            @click="toggleNotificationPanel"
-          >
-            <ElIcon><Bell /></ElIcon>
-            <span v-if="notificationCount > 0" class="notification-badge">
-              {{ notificationBadgeText }}
-            </span>
-          </button>
-          <section v-if="notificationPanelOpen" class="notification-panel">
-            <div class="notification-tabs">
-              <button
-                class="unread-tab"
-                :class="{ active: activeNotificationTab === 'unread' }"
-                type="button"
-                @click="activeNotificationTab = 'unread'"
-              >
-                未读 {{ unreadNotifications.length }}
-              </button>
-              <button
-                class="read-tab"
-                :class="{ active: activeNotificationTab === 'read' }"
-                type="button"
-                @click="activeNotificationTab = 'read'"
-              >
-                已读 {{ readNotifications.length }}
-              </button>
-            </div>
-            <div v-if="visibleNotifications.length === 0" class="notification-empty">
-              暂无通知
-            </div>
+          <div ref="notificationMenu" class="notification-menu">
             <button
-              v-for="record in visibleNotifications"
-              :key="record.id"
-              class="notification-item"
+              class="icon-button with-badge notification-trigger"
               type="button"
-              :data-notification-id="record.id"
-              @click="openNotification(record)"
+              :aria-label="`通知${notificationCount ? `（${notificationCount}）` : ''}`"
+              @click="toggleNotificationPanel"
             >
-              <span class="notification-item-title">{{ notificationTitle(record) }}</span>
-              <span v-if="notificationDetail(record)" class="notification-item-detail">
-                {{ notificationDetail(record) }}
+              <ElIcon><Bell /></ElIcon>
+              <span v-if="notificationCount > 0" class="notification-badge">
+                {{ notificationBadgeText }}
               </span>
-              <span class="notification-item-time">{{ notificationTime(record) }}</span>
             </button>
-          </section>
+            <section v-if="notificationPanelOpen" class="notification-panel">
+              <div class="notification-tabs">
+                <button
+                  class="unread-tab"
+                  :class="{ active: activeNotificationTab === 'unread' }"
+                  type="button"
+                  @click="activeNotificationTab = 'unread'"
+                >
+                  未读 {{ unreadNotifications.length }}
+                </button>
+                <button
+                  class="read-tab"
+                  :class="{ active: activeNotificationTab === 'read' }"
+                  type="button"
+                  @click="activeNotificationTab = 'read'"
+                >
+                  已读 {{ readNotifications.length }}
+                </button>
+              </div>
+              <ElScrollbar class="notification-list-scrollbar">
+                <div v-if="visibleNotifications.length === 0" class="notification-empty">
+                  暂无通知
+                </div>
+                <button
+                  v-for="record in visibleNotifications"
+                  :key="record.id"
+                  class="notification-item"
+                  type="button"
+                  :data-notification-id="record.id"
+                  @click="openNotification(record)"
+                >
+                  <span class="notification-item-title">{{ notificationTitle(record) }}</span>
+                  <span v-if="notificationDetail(record)" class="notification-item-detail">
+                    {{ notificationDetail(record) }}
+                  </span>
+                  <span class="notification-item-time">{{ notificationTime(record) }}</span>
+                </button>
+              </ElScrollbar>
+            </section>
+          </div>
           <button
             class="profile-trigger"
             type="button"
@@ -259,9 +283,9 @@ async function openNotification(record: NotificationRecord) {
           </button>
         </div>
       </header>
-      <main class="page-content">
+      <ElScrollbar tag="main" class="page-content page-content-scrollbar">
         <RouterView />
-      </main>
+      </ElScrollbar>
     </section>
     <ElDialog
       v-model="profileDialogOpen"

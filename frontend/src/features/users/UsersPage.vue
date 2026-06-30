@@ -192,7 +192,7 @@ async function batchDisableUsers() {
       </div>
       <ElTable :data="pagedUsers" @selection-change="updateSelectedRows">
         <ElTableColumn type="selection" width="48" />
-        <ElTableColumn label="头像" width="88"><template #default="{ row }"><UserAvatar :name="row.name" :size="42" /></template></ElTableColumn>
+        <ElTableColumn label="头像" width="88"><template #default="{ row }"><UserAvatar :name="row.name" :src="row.avatar_url" :size="42" /></template></ElTableColumn>
         <ElTableColumn prop="name" label="姓名" width="110" />
         <ElTableColumn prop="mobile" label="手机号" width="150" />
         <ElTableColumn label="部门" min-width="160"><template #default="{ row }">{{ row.departments?.join("、") }}</template></ElTableColumn>

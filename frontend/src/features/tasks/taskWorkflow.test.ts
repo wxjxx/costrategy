@@ -6,6 +6,7 @@ import {
   filterTasks,
   getDisplayStatus,
   groupTasksByDisplayStatus,
+  mergeTaskPreservingSubtasks,
   moveTaskForDisplay,
   statusColor,
   taskDisplayStatusColor,
@@ -75,6 +76,55 @@ describe("taskWorkflow", () => {
     ).toBe(true);
   });
 
+  it("requires all subtasks to be done before moving a parent task to done", () => {
+    const parentTask = {
+      ...baseTask,
+      subtasks: [
+        {
+          id: "subtask-1",
+          task_id: baseTask.id,
+          assignee_id: employee.id,
+          assignee_name: employee.name,
+          status: "done" as const,
+          description: "已完成子任务",
+          updated_at: "2025-05-20T09:00:00Z",
+          is_overdue: false,
+          display_status: "done",
+        },
+        {
+          id: "subtask-2",
+          task_id: baseTask.id,
+          assignee_id: employee.id,
+          assignee_name: employee.name,
+          status: "in_progress" as const,
+          description: "进行中子任务",
+          updated_at: "2025-05-20T10:00:00Z",
+          is_overdue: false,
+          display_status: "in_progress",
+        },
+      ],
+    };
+
+    expect(
+      canMoveTaskToStatus(parentTask, "done", { ...employee, role: "manager" }),
+    ).toBe(false);
+    expect(canMoveTaskToStatus(parentTask, "blocked", employee)).toBe(true);
+    expect(
+      canMoveTaskToStatus(
+        {
+          ...parentTask,
+          subtasks: parentTask.subtasks.map((subtask) => ({
+            ...subtask,
+            status: "done" as const,
+            display_status: "done",
+          })),
+        },
+        "done",
+        employee,
+      ),
+    ).toBe(true);
+  });
+
   it("matches any task assignee for permissions and filters", () => {
     const task = {
       ...baseTask,
@@ -107,8 +157,18 @@ describe("taskWorkflow", () => {
   });
 
   it("updates a task locally for optimistic kanban display", () => {
+    const subtask = {
+      id: "subtask-1",
+      task_id: "task-1",
+      assignee_id: "user-1",
+      status: "done" as const,
+      description: "子任务",
+      updated_at: "2025-05-20T08:30:00Z",
+      is_overdue: false,
+      display_status: "done",
+    };
     const moved = moveTaskForDisplay(
-      [{ ...baseTask, status: "todo", is_overdue: true }],
+      [{ ...baseTask, status: "todo", is_overdue: true, subtasks: [subtask] }],
       "task-1",
       "in_progress",
     );
@@ -118,9 +178,36 @@ describe("taskWorkflow", () => {
       status: "in_progress",
       is_overdue: true,
     });
+    expect(moved[0].subtasks).toEqual([subtask]);
     expect(groupTasksByDisplayStatus(moved).in_progress.map((task) => task.id)).toEqual([
       "task-1",
     ]);
+  });
+
+  it("preserves known subtasks when replacing a task with a partial response", () => {
+    const subtask = {
+      id: "subtask-1",
+      task_id: "task-1",
+      assignee_id: "user-1",
+      status: "done" as const,
+      description: "子任务",
+      updated_at: "2025-05-20T08:30:00Z",
+      is_overdue: false,
+      display_status: "done",
+    };
+
+    expect(
+      mergeTaskPreservingSubtasks(
+        { ...baseTask, subtasks: [subtask] },
+        { ...baseTask, status: "in_progress", subtasks: undefined },
+      ).subtasks,
+    ).toEqual([subtask]);
+    expect(
+      mergeTaskPreservingSubtasks(
+        { ...baseTask, subtasks: [subtask] },
+        { ...baseTask, subtasks: [] },
+      ).subtasks,
+    ).toEqual([]);
   });
 
   it("uses one color palette for task status displays", () => {

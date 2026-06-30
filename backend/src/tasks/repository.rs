@@ -52,12 +52,26 @@ pub struct Task {
     pub archived: bool,
     pub is_overdue: bool,
     pub display_status: String,
+    pub subtasks: Vec<TaskSubtask>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct TaskAssignee {
     pub id: Uuid,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct TaskSubtask {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub assignee_id: Uuid,
+    pub assignee_name: Option<String>,
+    pub status: TaskStatus,
+    pub description: String,
+    pub updated_at: DateTime<Utc>,
+    pub is_overdue: bool,
+    pub display_status: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -145,6 +159,21 @@ pub struct UpdateTask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateSubtask {
+    pub task_id: Uuid,
+    pub assignee_id: Uuid,
+    pub status: TaskStatus,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateSubtask {
+    pub assignee_id: Uuid,
+    pub status: TaskStatus,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTaskComment {
     pub task_id: Uuid,
     pub author_id: Uuid,
@@ -209,6 +238,21 @@ pub trait TaskRepository: Clone + Send + Sync + 'static {
     async fn get_task(&self, id: Uuid) -> Result<Task, TaskRepositoryError>;
     async fn get_task_detail(&self, id: Uuid) -> Result<TaskDetail, TaskRepositoryError>;
     async fn create_task(&self, task: CreateTask) -> Result<Task, TaskRepositoryError>;
+    async fn create_subtask(
+        &self,
+        subtask: CreateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError>;
+    async fn update_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+        subtask: UpdateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError>;
+    async fn delete_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+    ) -> Result<TaskSubtask, TaskRepositoryError>;
     async fn create_comment(
         &self,
         comment: CreateTaskComment,
@@ -251,6 +295,7 @@ pub struct MemoryTaskRepository {
 #[derive(Debug, Default)]
 struct MemoryTaskState {
     tasks: HashMap<Uuid, StoredTask>,
+    subtasks: Vec<StoredSubtask>,
     comments: Vec<StoredTaskComment>,
     attachments: Vec<StoredTaskAttachment>,
     activity_logs: Vec<MemoryActivityLog>,
@@ -273,6 +318,18 @@ struct StoredTask {
     creator_id: Uuid,
     updated_at: DateTime<Utc>,
     archived: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StoredSubtask {
+    id: Uuid,
+    task_id: Uuid,
+    assignee_id: Uuid,
+    assignee_name: Option<String>,
+    status: TaskStatus,
+    description: String,
+    completed_is_overdue: Option<bool>,
+    updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -315,16 +372,13 @@ struct MemoryActivityLog {
 #[async_trait]
 impl TaskRepository for MemoryTaskRepository {
     async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>, TaskRepositoryError> {
-        let mut tasks = self
-            .inner
-            .lock()
-            .expect("memory task repository lock")
+        let state = self.inner.lock().expect("memory task repository lock");
+        let mut tasks = state
             .tasks
             .values()
             .filter(|task| filter.include_archived || !task.archived)
-            .filter(|task| matches_filter(task, &filter))
-            .cloned()
-            .map(Task::from)
+            .map(|task| task_from_stored(task, &state))
+            .filter(|task| matches_task_filter(task, &filter))
             .collect::<Vec<_>>();
         sort_tasks(&mut tasks, filter.sort);
         Ok(tasks)
@@ -334,17 +388,13 @@ impl TaskRepository for MemoryTaskRepository {
         &self,
         due_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
-        let mut tasks = self
-            .inner
-            .lock()
-            .expect("memory task repository lock")
+        let state = self.inner.lock().expect("memory task repository lock");
+        let mut tasks = state
             .tasks
             .values()
-            .filter(|task| {
-                !task.archived && task.status != TaskStatus::Done && task.due_date == due_date
-            })
-            .cloned()
-            .map(Task::from)
+            .filter(|task| !task.archived && task.due_date == due_date)
+            .map(|task| task_from_stored(task, &state))
+            .filter(|task| task.status != TaskStatus::Done)
             .collect::<Vec<_>>();
         tasks.sort_by(|left, right| left.title.cmp(&right.title));
         Ok(tasks)
@@ -354,31 +404,25 @@ impl TaskRepository for MemoryTaskRepository {
         &self,
         local_date: NaiveDate,
     ) -> Result<Vec<Task>, TaskRepositoryError> {
-        let mut tasks = self
-            .inner
-            .lock()
-            .expect("memory task repository lock")
+        let state = self.inner.lock().expect("memory task repository lock");
+        let mut tasks = state
             .tasks
             .values()
-            .filter(|task| {
-                !task.archived && task.status != TaskStatus::Done && task.due_date < local_date
-            })
-            .cloned()
-            .map(Task::from)
+            .filter(|task| !task.archived && task.due_date < local_date)
+            .map(|task| task_from_stored(task, &state))
+            .filter(|task| task.status != TaskStatus::Done)
             .collect::<Vec<_>>();
         tasks.sort_by(|left, right| left.due_date.cmp(&right.due_date));
         Ok(tasks)
     }
 
     async fn get_task(&self, id: Uuid) -> Result<Task, TaskRepositoryError> {
-        self.inner
-            .lock()
-            .expect("memory task repository lock")
+        let state = self.inner.lock().expect("memory task repository lock");
+        state
             .tasks
             .get(&id)
             .filter(|task| !task.archived)
-            .cloned()
-            .map(Task::from)
+            .map(|task| task_from_stored(task, &state))
             .ok_or(TaskRepositoryError::NotFound)
     }
 
@@ -388,8 +432,7 @@ impl TaskRepository for MemoryTaskRepository {
             .tasks
             .get(&id)
             .filter(|task| !task.archived)
-            .cloned()
-            .map(Task::from)
+            .map(|task| task_from_stored(task, &state))
             .ok_or(TaskRepositoryError::NotFound)?;
         let comments = state
             .comments
@@ -453,6 +496,92 @@ impl TaskRepository for MemoryTaskRepository {
         });
         state.tasks.insert(stored.id, stored.clone());
         Ok(stored.into())
+    }
+
+    async fn create_subtask(
+        &self,
+        subtask: CreateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let description = normalize_subtask_description(&subtask.description)?;
+        let mut state = self.inner.lock().expect("memory task repository lock");
+        let Some(parent) = state
+            .tasks
+            .get(&subtask.task_id)
+            .filter(|task| !task.archived)
+        else {
+            return Err(TaskRepositoryError::NotFound);
+        };
+        let stored = StoredSubtask {
+            id: Uuid::new_v4(),
+            task_id: subtask.task_id,
+            assignee_id: subtask.assignee_id,
+            assignee_name: None,
+            status: subtask.status,
+            description,
+            completed_is_overdue: completed_overdue_for_create(subtask.status, parent.due_date),
+            updated_at: Utc::now(),
+        };
+        let created = subtask_from_stored(&stored, parent.due_date);
+        state.subtasks.push(stored);
+        Ok(created)
+    }
+
+    async fn update_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+        subtask: UpdateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let description = normalize_subtask_description(&subtask.description)?;
+        let mut state = self.inner.lock().expect("memory task repository lock");
+        let parent_due_date = state
+            .tasks
+            .get(&task_id)
+            .filter(|task| !task.archived)
+            .map(|task| task.due_date)
+            .ok_or(TaskRepositoryError::NotFound)?;
+        let Some(existing) = state
+            .subtasks
+            .iter_mut()
+            .find(|item| item.task_id == task_id && item.id == subtask_id)
+        else {
+            return Err(TaskRepositoryError::NotFound);
+        };
+        let previous_status = existing.status;
+        existing.assignee_id = subtask.assignee_id;
+        existing.status = subtask.status;
+        existing.description = description;
+        existing.completed_is_overdue = completed_overdue_for_update(
+            previous_status,
+            subtask.status,
+            existing.completed_is_overdue,
+            parent_due_date,
+        );
+        existing.updated_at = Utc::now();
+        Ok(subtask_from_stored(existing, parent_due_date))
+    }
+
+    async fn delete_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let mut state = self.inner.lock().expect("memory task repository lock");
+        let parent_due_date = state
+            .tasks
+            .get(&task_id)
+            .filter(|task| !task.archived)
+            .map(|task| task.due_date)
+            .ok_or(TaskRepositoryError::NotFound)?;
+        let Some(index) = state
+            .subtasks
+            .iter()
+            .position(|item| item.task_id == task_id && item.id == subtask_id)
+        else {
+            return Err(TaskRepositoryError::NotFound);
+        };
+        let removed = state.subtasks.remove(index);
+        Ok(subtask_from_stored(&removed, parent_due_date))
     }
 
     async fn create_comment(
@@ -593,12 +722,21 @@ impl TaskRepository for MemoryTaskRepository {
         validate_date_range(task.start_date, task.due_date)?;
         let due_date_change_reason = normalize_due_date_change_reason(task.due_date_change_reason)?;
         let mut state = self.inner.lock().expect("memory task repository lock");
+        if state.tasks.get(&id).filter(|task| !task.archived).is_none() {
+            return Err(TaskRepositoryError::NotFound);
+        }
+        let has_subtasks = state.subtasks.iter().any(|subtask| subtask.task_id == id);
         let Some(existing) = state.tasks.get_mut(&id).filter(|task| !task.archived) else {
             return Err(TaskRepositoryError::NotFound);
         };
         let previous_due_date = existing.due_date;
         let previous_status = existing.status;
         let new_due_date = task.due_date;
+        let next_status = if has_subtasks {
+            existing.status
+        } else {
+            task.status
+        };
         if previous_due_date != task.due_date && due_date_change_reason.is_none() {
             return Err(TaskRepositoryError::Validation);
         }
@@ -607,13 +745,13 @@ impl TaskRepository for MemoryTaskRepository {
         existing.title = task.title;
         existing.assignee_id = task.assignee_id;
         existing.assignee_ids = normalize_assignee_ids(task.assignee_id, task.assignee_ids);
-        existing.status = task.status;
+        existing.status = next_status;
         existing.priority = task.priority;
         existing.start_date = task.start_date;
         existing.due_date = task.due_date;
         existing.completed_is_overdue = completed_overdue_for_update(
             previous_status,
-            task.status,
+            next_status,
             existing.completed_is_overdue,
             task.due_date,
         );
@@ -651,6 +789,16 @@ impl TaskRepository for MemoryTaskRepository {
         status: TaskStatus,
     ) -> Result<Task, TaskRepositoryError> {
         let mut state = self.inner.lock().expect("memory task repository lock");
+        let has_subtasks = state.subtasks.iter().any(|subtask| subtask.task_id == id);
+        if has_subtasks {
+            let task = state
+                .tasks
+                .get(&id)
+                .filter(|task| !task.archived)
+                .map(|task| task_from_stored(task, &state))
+                .ok_or(TaskRepositoryError::NotFound)?;
+            return Ok(task);
+        }
         let Some(existing) = state.tasks.get_mut(&id).filter(|task| !task.archived) else {
             return Err(TaskRepositoryError::NotFound);
         };
@@ -755,6 +903,47 @@ impl SqlxTaskRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    async fn attach_subtasks_to_tasks(
+        &self,
+        tasks: &mut [Task],
+    ) -> Result<(), TaskRepositoryError> {
+        if tasks.is_empty() {
+            return Ok(());
+        }
+        let task_ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
+        let rows = sqlx::query(
+            "select s.id, s.task_id, s.assignee_id, u.name as assignee_name, s.status,
+                    s.description, s.completed_is_overdue, s.updated_at, t.due_date as parent_due_date
+             from task_subtasks s
+             join tasks t on t.id = s.task_id
+             join users u on u.id = s.assignee_id
+             where s.task_id = any($1)
+             order by s.created_at asc",
+        )
+        .bind(task_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        let mut subtasks_by_task: HashMap<Uuid, Vec<TaskSubtask>> = HashMap::new();
+        for row in rows {
+            let subtask = row_to_subtask(row)?;
+            subtasks_by_task
+                .entry(subtask.task_id)
+                .or_default()
+                .push(subtask);
+        }
+        for task in tasks {
+            task.subtasks = subtasks_by_task.remove(&task.id).unwrap_or_default();
+            apply_subtask_overdue_rollup(task);
+        }
+        Ok(())
+    }
+
+    async fn attach_subtasks_to_task(&self, task: &mut Task) -> Result<(), TaskRepositoryError> {
+        self.attach_subtasks_to_tasks(std::slice::from_mut(task))
+            .await
+    }
 }
 
 fn task_select_sql(from_clause: &str) -> String {
@@ -797,7 +986,7 @@ impl TaskRepository for SqlxTaskRepository {
                     select 1 from task_assignees filter_assignee
                     where filter_assignee.task_id = t.id and filter_assignee.user_id = any($2)
                ))
-               and ($3::text[] is null or t.status = any($3))
+               and ($3::text[] is null or true)
                and ($4::text[] is null or t.priority = any($4))
                and ($5::date is null or t.due_date >= $5)
                and ($6::date is null or t.start_date <= $6)
@@ -812,13 +1001,20 @@ impl TaskRepository for SqlxTaskRepository {
             .bind(priorities)
             .bind(filter.date_from)
             .bind(filter.date_to)
-            .bind(filter.keyword)
+            .bind(filter.keyword.clone())
             .bind(filter.include_archived)
             .fetch_all(&self.pool)
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
 
-        rows.into_iter().map(row_to_task).collect()
+        let mut tasks = rows
+            .into_iter()
+            .map(row_to_task)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.attach_subtasks_to_tasks(&mut tasks).await?;
+        tasks.retain(|task| matches_task_filter(task, &filter));
+        sort_tasks(&mut tasks, filter.sort);
+        Ok(tasks)
     }
 
     async fn list_tasks_due_on(
@@ -828,7 +1024,6 @@ impl TaskRepository for SqlxTaskRepository {
         let rows = sqlx::query(&format!(
             "{} 
              where t.archived_at is null
-               and t.status <> 'done'
                and t.due_date = $1
              order by t.due_date asc, t.title asc",
             task_select_sql("from tasks t"),
@@ -838,7 +1033,14 @@ impl TaskRepository for SqlxTaskRepository {
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
 
-        rows.into_iter().map(row_to_task).collect()
+        let mut tasks = rows
+            .into_iter()
+            .map(row_to_task)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.attach_subtasks_to_tasks(&mut tasks).await?;
+        tasks.retain(|task| task.status != TaskStatus::Done);
+        tasks.sort_by(|left, right| left.title.cmp(&right.title));
+        Ok(tasks)
     }
 
     async fn list_overdue_tasks(
@@ -848,7 +1050,6 @@ impl TaskRepository for SqlxTaskRepository {
         let rows = sqlx::query(&format!(
             "{} 
              where t.archived_at is null
-               and t.status <> 'done'
                and t.due_date < $1
              order by t.due_date asc, t.title asc",
             task_select_sql("from tasks t"),
@@ -858,7 +1059,14 @@ impl TaskRepository for SqlxTaskRepository {
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
 
-        rows.into_iter().map(row_to_task).collect()
+        let mut tasks = rows
+            .into_iter()
+            .map(row_to_task)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.attach_subtasks_to_tasks(&mut tasks).await?;
+        tasks.retain(|task| task.status != TaskStatus::Done);
+        tasks.sort_by(|left, right| left.due_date.cmp(&right.due_date));
+        Ok(tasks)
     }
 
     async fn get_task(&self, id: Uuid) -> Result<Task, TaskRepositoryError> {
@@ -871,9 +1079,12 @@ impl TaskRepository for SqlxTaskRepository {
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
 
-        row.map(row_to_task)
+        let mut task = row
+            .map(row_to_task)
             .transpose()?
-            .ok_or(TaskRepositoryError::NotFound)
+            .ok_or(TaskRepositoryError::NotFound)?;
+        self.attach_subtasks_to_task(&mut task).await?;
+        Ok(task)
     }
 
     async fn get_task_detail(&self, id: Uuid) -> Result<TaskDetail, TaskRepositoryError> {
@@ -986,6 +1197,118 @@ impl TaskRepository for SqlxTaskRepository {
             .map_err(|_| TaskRepositoryError::Database)?;
         let created = row_to_task(row)?;
         self.get_task(created.id).await
+    }
+
+    async fn create_subtask(
+        &self,
+        subtask: CreateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let description = normalize_subtask_description(&subtask.description)?;
+        let row = sqlx::query(
+            "with inserted as (
+                insert into task_subtasks (
+                    id, task_id, assignee_id, status, description, completed_is_overdue
+                )
+                select $1, t.id, $3, $4, $5,
+                       case when $4 = 'done' then (timezone('Asia/Shanghai', now())::date > t.due_date) else null end
+                from tasks t
+                where t.id = $2 and t.archived_at is null
+                returning id, task_id, assignee_id, status, description, completed_is_overdue, updated_at
+             )
+             select s.id, s.task_id, s.assignee_id, u.name as assignee_name, s.status,
+                    s.description, s.completed_is_overdue, s.updated_at, t.due_date as parent_due_date
+             from inserted s
+             join tasks t on t.id = s.task_id
+             join users u on u.id = s.assignee_id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(subtask.task_id)
+        .bind(subtask.assignee_id)
+        .bind(subtask.status.as_str())
+        .bind(description)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        row.map(row_to_subtask)
+            .transpose()?
+            .ok_or(TaskRepositoryError::NotFound)
+    }
+
+    async fn update_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+        subtask: UpdateSubtask,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let description = normalize_subtask_description(&subtask.description)?;
+        let row = sqlx::query(
+            "with updated as (
+                update task_subtasks s set
+                    assignee_id = $3,
+                    status = $4,
+                    description = $5,
+                    completed_is_overdue = case
+                        when $4 = 'done' and s.status <> 'done' then (timezone('Asia/Shanghai', now())::date > t.due_date)
+                        when $4 = 'done' then s.completed_is_overdue
+                        else null
+                    end,
+                    updated_at = now()
+                from tasks t
+                where s.id = $2
+                  and s.task_id = $1
+                  and t.id = s.task_id
+                  and t.archived_at is null
+                returning s.id, s.task_id, s.assignee_id, s.status, s.description,
+                          s.completed_is_overdue, s.updated_at
+             )
+             select s.id, s.task_id, s.assignee_id, u.name as assignee_name, s.status,
+                    s.description, s.completed_is_overdue, s.updated_at, t.due_date as parent_due_date
+             from updated s
+             join tasks t on t.id = s.task_id
+             join users u on u.id = s.assignee_id",
+        )
+        .bind(task_id)
+        .bind(subtask_id)
+        .bind(subtask.assignee_id)
+        .bind(subtask.status.as_str())
+        .bind(description)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        row.map(row_to_subtask)
+            .transpose()?
+            .ok_or(TaskRepositoryError::NotFound)
+    }
+
+    async fn delete_subtask(
+        &self,
+        task_id: Uuid,
+        subtask_id: Uuid,
+    ) -> Result<TaskSubtask, TaskRepositoryError> {
+        let row = sqlx::query(
+            "with deleted as (
+                delete from task_subtasks s
+                using tasks t
+                where s.id = $2
+                  and s.task_id = $1
+                  and t.id = s.task_id
+                  and t.archived_at is null
+                returning s.id, s.task_id, s.assignee_id, s.status, s.description,
+                          s.completed_is_overdue, s.updated_at, t.due_date as parent_due_date
+             )
+             select s.id, s.task_id, s.assignee_id, u.name as assignee_name, s.status,
+                    s.description, s.completed_is_overdue, s.updated_at, s.parent_due_date
+             from deleted s
+             join users u on u.id = s.assignee_id",
+        )
+        .bind(task_id)
+        .bind(subtask_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        row.map(row_to_subtask)
+            .transpose()?
+            .ok_or(TaskRepositoryError::NotFound)
     }
 
     async fn create_comment(
@@ -1170,13 +1493,17 @@ impl TaskRepository for SqlxTaskRepository {
             .begin()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        let previous_due_date: Option<NaiveDate> =
-            sqlx::query_scalar("select due_date from tasks where id = $1 and archived_at is null")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|_| TaskRepositoryError::Database)?;
-        let Some(previous_due_date) = previous_due_date else {
+        let previous: Option<(NaiveDate, bool)> = sqlx::query_as(
+            "select due_date,
+                    exists(select 1 from task_subtasks where task_id = tasks.id) as has_subtasks
+             from tasks
+             where id = $1 and archived_at is null",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        let Some((previous_due_date, has_subtasks)) = previous else {
             return Err(TaskRepositoryError::NotFound);
         };
         if previous_due_date != task.due_date && due_date_change_reason.is_none() {
@@ -1188,12 +1515,13 @@ impl TaskRepository for SqlxTaskRepository {
                     project_id = $2,
                     title = $3,
                     assignee_id = $4,
-                    status = $5,
+                    status = case when $10 then status else $5 end,
                     priority = $6,
                     start_date = $7,
                     due_date = $8,
                     description_json = $9,
                     completed_is_overdue = case
+                        when $10 then completed_is_overdue
                         when $5 = 'done' and status <> 'done' then (timezone('Asia/Shanghai', now())::date > $8)
                         when $5 = 'done' then completed_is_overdue
                         else null
@@ -1216,6 +1544,7 @@ impl TaskRepository for SqlxTaskRepository {
         .bind(task.start_date)
         .bind(task.due_date)
         .bind(task.description_json)
+        .bind(has_subtasks)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|_| TaskRepositoryError::Database)?;
@@ -1256,6 +1585,20 @@ impl TaskRepository for SqlxTaskRepository {
         actor_id: Uuid,
         status: TaskStatus,
     ) -> Result<Task, TaskRepositoryError> {
+        let has_subtasks: Option<bool> = sqlx::query_scalar(
+            "select exists(select 1 from task_subtasks where task_id = tasks.id)
+             from tasks
+             where id = $1 and archived_at is null",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| TaskRepositoryError::Database)?;
+        match has_subtasks {
+            Some(true) => return self.get_task(id).await,
+            Some(false) => {}
+            None => return Err(TaskRepositoryError::NotFound),
+        }
         let mut tx = self
             .pool
             .begin()
@@ -1312,7 +1655,9 @@ impl TaskRepository for SqlxTaskRepository {
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        row_to_task(row)
+        let mut task = row_to_task(row)?;
+        self.attach_subtasks_to_task(&mut task).await?;
+        Ok(task)
     }
 
     async fn archive_task(&self, id: Uuid, actor_id: Uuid) -> Result<Task, TaskRepositoryError> {
@@ -1343,7 +1688,9 @@ impl TaskRepository for SqlxTaskRepository {
         tx.commit()
             .await
             .map_err(|_| TaskRepositoryError::Database)?;
-        row_to_task(row)
+        let mut task = row_to_task(row)?;
+        self.attach_subtasks_to_task(&mut task).await?;
+        Ok(task)
     }
 }
 
@@ -1379,7 +1726,40 @@ impl From<StoredTask> for Task {
             archived: task.archived,
             is_overdue,
             display_status: display_status(task.status, is_overdue).to_string(),
+            subtasks: Vec::new(),
         }
+    }
+}
+
+fn task_from_stored(task: &StoredTask, state: &MemoryTaskState) -> Task {
+    let mut task = Task::from(task.clone());
+    task.subtasks = state
+        .subtasks
+        .iter()
+        .filter(|subtask| subtask.task_id == task.id)
+        .map(|subtask| subtask_from_stored(subtask, task.due_date))
+        .collect();
+    apply_subtask_overdue_rollup(&mut task);
+    task
+}
+
+fn subtask_from_stored(subtask: &StoredSubtask, parent_due_date: NaiveDate) -> TaskSubtask {
+    let is_overdue = compute_overdue(
+        subtask.status,
+        parent_due_date,
+        subtask.completed_is_overdue,
+        shanghai_today(),
+    );
+    TaskSubtask {
+        id: subtask.id,
+        task_id: subtask.task_id,
+        assignee_id: subtask.assignee_id,
+        assignee_name: subtask.assignee_name.clone(),
+        status: subtask.status,
+        description: subtask.description.clone(),
+        updated_at: subtask.updated_at,
+        is_overdue,
+        display_status: display_status(subtask.status, is_overdue).to_string(),
     }
 }
 
@@ -1607,6 +1987,15 @@ fn normalize_comment_content(content: &str) -> Result<String, TaskRepositoryErro
     Ok(trimmed.to_string())
 }
 
+fn normalize_subtask_description(description: &str) -> Result<String, TaskRepositoryError> {
+    let trimmed = description.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 1000 {
+        return Err(TaskRepositoryError::Validation);
+    }
+
+    Ok(trimmed.to_string())
+}
+
 fn validate_attachment_metadata(
     attachment: &CreateTaskAttachment,
 ) -> Result<(), TaskRepositoryError> {
@@ -1719,7 +2108,7 @@ fn ensure_status_transition(from: TaskStatus, to: TaskStatus) -> Result<(), Task
     }
 }
 
-fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
+fn matches_task_filter(task: &Task, filter: &TaskFilter) -> bool {
     if let Some(keyword) = &filter.keyword {
         if !task.title.contains(keyword) {
             return false;
@@ -1734,9 +2123,9 @@ fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
     let assignee_ids = normalized_optional_ids(filter.assignee_id, &filter.assignee_ids);
     if let Some(assignee_ids) = assignee_ids {
         if !task
-            .assignee_ids
+            .assignees
             .iter()
-            .any(|assignee_id| assignee_ids.contains(assignee_id))
+            .any(|assignee| assignee_ids.contains(&assignee.id))
         {
             return false;
         }
@@ -1747,10 +2136,8 @@ fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
     }
     statuses.sort_by_key(|status| status.as_str());
     statuses.dedup();
-    if !statuses.is_empty() {
-        if !statuses.contains(&task.status) {
-            return false;
-        }
+    if !statuses.is_empty() && !statuses.contains(&task.status) {
+        return false;
     }
     let mut priorities = filter.priorities.clone();
     if let Some(priority) = filter.priority {
@@ -1758,10 +2145,8 @@ fn matches_filter(task: &StoredTask, filter: &TaskFilter) -> bool {
     }
     priorities.sort_by_key(|priority| priority.as_str());
     priorities.dedup();
-    if !priorities.is_empty() {
-        if !priorities.contains(&task.priority) {
-            return false;
-        }
+    if !priorities.is_empty() && !priorities.contains(&task.priority) {
+        return false;
     }
     if let Some(date_from) = filter.date_from {
         if task.due_date < date_from {
@@ -1906,6 +2291,49 @@ fn row_to_task(row: sqlx::postgres::PgRow) -> Result<Task, TaskRepositoryError> 
             .try_get::<Option<chrono::DateTime<Utc>>, _>("archived_at")
             .map_err(|_| TaskRepositoryError::Database)?
             .is_some(),
+        is_overdue,
+        display_status: display_status(status, is_overdue).to_string(),
+        subtasks: Vec::new(),
+    })
+}
+
+fn row_to_subtask(row: sqlx::postgres::PgRow) -> Result<TaskSubtask, TaskRepositoryError> {
+    let status: String = row
+        .try_get("status")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let status = status.parse().map_err(|_| TaskRepositoryError::Database)?;
+    let parent_due_date = row
+        .try_get("parent_due_date")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let completed_is_overdue = row
+        .try_get("completed_is_overdue")
+        .map_err(|_| TaskRepositoryError::Database)?;
+    let is_overdue = compute_overdue(
+        status,
+        parent_due_date,
+        completed_is_overdue,
+        shanghai_today(),
+    );
+    Ok(TaskSubtask {
+        id: row
+            .try_get("id")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        task_id: row
+            .try_get("task_id")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        assignee_id: row
+            .try_get("assignee_id")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        assignee_name: row
+            .try_get("assignee_name")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        status,
+        description: row
+            .try_get("description")
+            .map_err(|_| TaskRepositoryError::Database)?,
+        updated_at: row
+            .try_get("updated_at")
+            .map_err(|_| TaskRepositoryError::Database)?,
         is_overdue,
         display_status: display_status(status, is_overdue).to_string(),
     })
@@ -2096,6 +2524,38 @@ fn compute_overdue(
     today > due_date
 }
 
+fn apply_subtask_overdue_rollup(task: &mut Task) {
+    if let Some(status) = rollup_subtask_status(
+        &task
+            .subtasks
+            .iter()
+            .map(|subtask| subtask.status)
+            .collect::<Vec<_>>(),
+    ) {
+        task.status = status;
+    }
+    if task.subtasks.iter().any(|subtask| subtask.is_overdue) {
+        task.is_overdue = true;
+    }
+    task.display_status = display_status(task.status, task.is_overdue).to_string();
+}
+
+fn rollup_subtask_status(statuses: &[TaskStatus]) -> Option<TaskStatus> {
+    if statuses.is_empty() {
+        return None;
+    }
+    if statuses.iter().any(|status| *status == TaskStatus::Blocked) {
+        return Some(TaskStatus::Blocked);
+    }
+    if statuses.iter().all(|status| *status == TaskStatus::Done) {
+        return Some(TaskStatus::Done);
+    }
+    if statuses.iter().all(|status| *status == TaskStatus::Todo) {
+        return Some(TaskStatus::Todo);
+    }
+    Some(TaskStatus::InProgress)
+}
+
 fn display_status(status: TaskStatus, _is_overdue: bool) -> &'static str {
     status.as_str()
 }
@@ -2121,5 +2581,161 @@ mod tests {
             Some(true),
             after_due_date,
         ));
+    }
+
+    #[test]
+    fn parent_status_rolls_up_from_subtask_statuses() {
+        assert_eq!(rollup_subtask_status(&[]), None);
+        assert_eq!(
+            rollup_subtask_status(&[TaskStatus::Todo]),
+            Some(TaskStatus::Todo)
+        );
+        assert_eq!(
+            rollup_subtask_status(&[TaskStatus::Todo, TaskStatus::Done]),
+            Some(TaskStatus::InProgress)
+        );
+        assert_eq!(
+            rollup_subtask_status(&[TaskStatus::Todo, TaskStatus::InProgress]),
+            Some(TaskStatus::InProgress)
+        );
+        assert_eq!(
+            rollup_subtask_status(&[TaskStatus::Done, TaskStatus::Done]),
+            Some(TaskStatus::Done)
+        );
+        assert_eq!(
+            rollup_subtask_status(&[TaskStatus::Done, TaskStatus::Blocked]),
+            Some(TaskStatus::Blocked)
+        );
+    }
+
+    #[tokio::test]
+    async fn parent_task_status_is_derived_from_subtasks_in_queries() {
+        let repository = MemoryTaskRepository::default();
+        let project_id = Uuid::new_v4();
+        let assignee_id = Uuid::new_v4();
+        let creator_id = Uuid::new_v4();
+        let parent = repository
+            .create_task(CreateTask {
+                project_id,
+                title: "父任务".to_string(),
+                assignee_id,
+                assignee_ids: vec![assignee_id],
+                status: TaskStatus::Todo,
+                priority: TaskPriority::Medium,
+                start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                due_date: NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
+                description_json: serde_json::json!({"type": "doc", "content": []}),
+                creator_id,
+            })
+            .await
+            .unwrap();
+
+        let first = repository
+            .create_subtask(CreateSubtask {
+                task_id: parent.id,
+                assignee_id,
+                status: TaskStatus::Todo,
+                description: "待开始子任务".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::Todo
+        );
+
+        let second = repository
+            .create_subtask(CreateSubtask {
+                task_id: parent.id,
+                assignee_id,
+                status: TaskStatus::Done,
+                description: "已完成子任务".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::InProgress
+        );
+
+        repository
+            .update_subtask(
+                parent.id,
+                first.id,
+                UpdateSubtask {
+                    assignee_id,
+                    status: TaskStatus::Blocked,
+                    description: "阻塞子任务".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::Blocked
+        );
+
+        repository
+            .update_subtask(
+                parent.id,
+                first.id,
+                UpdateSubtask {
+                    assignee_id,
+                    status: TaskStatus::Done,
+                    description: "恢复完成".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::Done
+        );
+
+        let done_tasks = repository
+            .list_tasks(TaskFilter {
+                status: Some(TaskStatus::Done),
+                ..TaskFilter::default()
+            })
+            .await
+            .unwrap();
+        assert!(done_tasks.iter().any(|task| task.id == parent.id));
+
+        repository
+            .update_task(
+                parent.id,
+                creator_id,
+                UpdateTask {
+                    project_id,
+                    title: "父任务资料更新".to_string(),
+                    assignee_id,
+                    assignee_ids: vec![assignee_id],
+                    status: TaskStatus::Blocked,
+                    priority: TaskPriority::High,
+                    start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+                    due_date: NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
+                    description_json: serde_json::json!({"type": "doc", "content": []}),
+                    due_date_change_reason: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::Done
+        );
+
+        repository
+            .delete_subtask(parent.id, first.id)
+            .await
+            .unwrap();
+        repository
+            .delete_subtask(parent.id, second.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_task(parent.id).await.unwrap().status,
+            TaskStatus::Todo
+        );
     }
 }

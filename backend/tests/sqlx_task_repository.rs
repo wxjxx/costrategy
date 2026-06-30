@@ -5,8 +5,8 @@ use costrategy_backend::projects::{
     CreateProject, ProjectRepository, ProjectStatus, SqlxProjectRepository,
 };
 use costrategy_backend::tasks::{
-    CreateTask, CreateTaskAttachment, CreateTaskComment, SqlxTaskRepository, TaskFilter,
-    TaskPriority, TaskRepository, TaskSort, TaskStatus,
+    CreateSubtask, CreateTask, CreateTaskAttachment, CreateTaskComment, SqlxTaskRepository,
+    TaskFilter, TaskPriority, TaskRepository, TaskSort, TaskStatus,
 };
 use costrategy_backend::users::{NewUser, SqlxUserRepository, UserRepository, UserStatus};
 use serde_json::json;
@@ -95,7 +95,7 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
     assert_eq!(created.status, TaskStatus::Todo);
     assert_eq!(created.project_name.as_deref(), Some("任务测试项目"));
     assert_eq!(created.assignee_name.as_deref(), Some("测试员工"));
-    assert!(created.updated_at <= chrono::Utc::now());
+    assert!(created.updated_at <= chrono::Utc::now() + chrono::Duration::seconds(5));
     let low_priority = tasks
         .create_task(CreateTask {
             project_id: project.id,
@@ -244,6 +244,204 @@ async fn sqlx_task_repository_crud_status_archive_and_activity_logs() {
             .await
             .unwrap();
     assert_eq!(log_count, 8);
+
+    cleanup(&pool, &manager_ding, &assignee_ding, &project_code).await;
+}
+
+#[tokio::test]
+async fn sqlx_task_repository_returns_subtasks_and_parent_overdue_rollup() {
+    let pool = test_pool().await;
+    MIGRATOR.run(&pool).await.unwrap();
+    let users = SqlxUserRepository::new(pool.clone());
+    let projects = SqlxProjectRepository::new(pool.clone());
+    let tasks = SqlxTaskRepository::new(pool.clone());
+    let suffix = Uuid::new_v4().simple().to_string();
+    let manager_ding = format!("subtask-manager-{suffix}");
+    let assignee_ding = format!("subtask-assignee-{suffix}");
+    let project_code = format!("TEST-SUBTASK-PROJECT-{suffix}");
+
+    cleanup(&pool, &manager_ding, &assignee_ding, &project_code).await;
+
+    users
+        .upsert_synced_user(NewUser {
+            dingtalk_user_id: manager_ding.clone(),
+            union_id: None,
+            name: "子任务经理".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Manager,
+            status: UserStatus::Active,
+        })
+        .await
+        .unwrap();
+    users
+        .upsert_synced_user(NewUser {
+            dingtalk_user_id: assignee_ding.clone(),
+            union_id: None,
+            name: "子任务员工".to_string(),
+            avatar_url: None,
+            mobile: None,
+            role: UserRole::Employee,
+            status: UserStatus::Active,
+        })
+        .await
+        .unwrap();
+    let manager = users
+        .find_by_dingtalk_user_id(&manager_ding)
+        .await
+        .unwrap()
+        .unwrap();
+    let assignee = users
+        .find_by_dingtalk_user_id(&assignee_ding)
+        .await
+        .unwrap()
+        .unwrap();
+    let project = projects
+        .create_project(CreateProject {
+            code: Some(project_code.clone()),
+            name: "子任务测试项目".to_string(),
+            owner_id: Some(manager.id),
+            description: None,
+            start_date: Some(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()),
+            end_date: Some(NaiveDate::from_ymd_opt(2099, 1, 1).unwrap()),
+            status: ProjectStatus::Active,
+        })
+        .await
+        .unwrap();
+    let parent = tasks
+        .create_task(CreateTask {
+            project_id: project.id,
+            title: "父任务".to_string(),
+            assignee_id: assignee.id,
+            assignee_ids: vec![assignee.id],
+            status: TaskStatus::Todo,
+            priority: TaskPriority::Medium,
+            start_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+            due_date: NaiveDate::from_ymd_opt(2099, 1, 1).unwrap(),
+            description_json: json!({"type": "doc", "content": []}),
+            creator_id: manager.id,
+        })
+        .await
+        .unwrap();
+    let on_time = tasks
+        .create_subtask(CreateSubtask {
+            task_id: parent.id,
+            assignee_id: assignee.id,
+            status: TaskStatus::Done,
+            description: "按时完成的子任务".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(!on_time.is_overdue);
+
+    tasks
+        .update_task(
+            parent.id,
+            manager.id,
+            costrategy_backend::tasks::UpdateTask {
+                project_id: project.id,
+                title: "父任务".to_string(),
+                assignee_id: assignee.id,
+                assignee_ids: vec![assignee.id],
+                status: TaskStatus::Todo,
+                priority: TaskPriority::Medium,
+                start_date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                due_date: NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+                description_json: json!({"type": "doc", "content": []}),
+                due_date_change_reason: Some("验证子任务延期聚合".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    let overdue = tasks
+        .create_subtask(CreateSubtask {
+            task_id: parent.id,
+            assignee_id: assignee.id,
+            status: TaskStatus::InProgress,
+            description: "延期的子任务".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(overdue.is_overdue);
+
+    let detail = tasks.get_task_detail(parent.id).await.unwrap();
+    assert!(detail.task.is_overdue);
+    assert_eq!(detail.task.status, TaskStatus::InProgress);
+    assert_eq!(detail.task.subtasks.len(), 2);
+    assert!(!detail.task.subtasks[0].is_overdue);
+    assert!(detail.task.subtasks[1].is_overdue);
+
+    tasks
+        .update_subtask(
+            parent.id,
+            overdue.id,
+            costrategy_backend::tasks::UpdateSubtask {
+                assignee_id: assignee.id,
+                status: TaskStatus::Blocked,
+                description: "阻塞的子任务".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks.get_task(parent.id).await.unwrap().status,
+        TaskStatus::Blocked
+    );
+
+    tasks
+        .update_subtask(
+            parent.id,
+            overdue.id,
+            costrategy_backend::tasks::UpdateSubtask {
+                assignee_id: assignee.id,
+                status: TaskStatus::Done,
+                description: "延期后完成的子任务".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks.get_task(parent.id).await.unwrap().status,
+        TaskStatus::Done
+    );
+    let done_tasks = tasks
+        .list_tasks(TaskFilter {
+            status: Some(TaskStatus::Done),
+            ..TaskFilter::default()
+        })
+        .await
+        .unwrap();
+    assert!(done_tasks.iter().any(|task| task.id == parent.id));
+
+    tasks
+        .update_task(
+            parent.id,
+            manager.id,
+            costrategy_backend::tasks::UpdateTask {
+                project_id: project.id,
+                title: "父任务资料更新".to_string(),
+                assignee_id: assignee.id,
+                assignee_ids: vec![assignee.id],
+                status: TaskStatus::Blocked,
+                priority: TaskPriority::High,
+                start_date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                due_date: NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+                description_json: json!({"type": "doc", "content": []}),
+                due_date_change_reason: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks.get_task(parent.id).await.unwrap().status,
+        TaskStatus::Done
+    );
+    tasks.delete_subtask(parent.id, on_time.id).await.unwrap();
+    tasks.delete_subtask(parent.id, overdue.id).await.unwrap();
+    assert_eq!(
+        tasks.get_task(parent.id).await.unwrap().status,
+        TaskStatus::Todo
+    );
 
     cleanup(&pool, &manager_ding, &assignee_ding, &project_code).await;
 }

@@ -144,13 +144,14 @@ function showAllByStatus(status: "todo" | "in_progress" | "blocked" | "done") {
           type="primary"
           show-icon
           :closable="false"
-          title="员工仅可拖拽自己负责的任务，管理人员可拖拽全部任务"
+          title="员工仅可拖拽自己负责的任务，管理人员可拖拽全部任务；完成全部子任务才能完成主任务"
         />
       </div>
       <TaskKanbanView
         v-if="store.view === 'kanban' && currentUser"
         :tasks="tasks"
         :current-user="currentUser"
+        :users="users"
         @show-all="showAllByStatus"
       />
       <TaskGanttView v-else-if="store.view === 'gantt'" :tasks="tasks" />

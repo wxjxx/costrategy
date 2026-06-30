@@ -23,6 +23,8 @@ export type GanttTask = {
   assigneeText?: string;
   avatarText?: string;
   titleText?: string;
+  rowKind?: "project" | "task" | "subtask";
+  hasChildren?: boolean;
 };
 
 function escapeHtml(value: string): string {
@@ -97,14 +99,14 @@ export function formatGanttBarContent(task: GanttTask): string {
 }
 
 export function shouldUseDefaultGanttClick(task: GanttTask): boolean {
-  return !task.parent;
+  return task.rowKind === "project" || Boolean(task.hasChildren);
 }
 
 export function shouldToggleProjectRowFromClick(
   task: GanttTask,
   clickedTreeIcon: boolean,
 ): boolean {
-  return !task.parent && !clickedTreeIcon;
+  return (task.rowKind === "project" || Boolean(task.hasChildren)) && !clickedTreeIcon;
 }
 
 export function isGanttProjectOpen(task: GanttTask): boolean {
@@ -126,12 +128,15 @@ export function buildGanttTasks(
         text: escapeHtml(task.project_name || "未命名项目"),
         type: projectTaskType,
         open: true,
+        rowKind: "project" as const,
+        hasChildren: true,
       };
 
       projectTasks.set(projectId, projectTask);
       ganttTasks.push(projectTask);
     }
 
+    const subtasks = task.subtasks ?? [];
     ganttTasks.push({
       id: task.id,
       parent: projectId,
@@ -142,6 +147,26 @@ export function buildGanttTasks(
       assigneeText: taskAssigneeNames(task),
       avatarText: (primaryTaskAssigneeName(task) || "用").slice(0, 1),
       titleText: task.title,
+      open: subtasks.length > 0,
+      rowKind: "task",
+      hasChildren: subtasks.length > 0,
+    });
+
+    subtasks.forEach((subtask) => {
+      ganttTasks.push({
+        id: `subtask-${subtask.id}`,
+        parent: task.id,
+        text: subtask.is_overdue
+          ? `<span class="overdue-badge gantt-overdue-badge" aria-label="已延期">延</span>${escapeHtml(subtask.description)}`
+          : escapeHtml(subtask.description),
+        start_date: task.start_date,
+        end_date: task.due_date,
+        color: statusColor(subtask.status),
+        assigneeText: subtask.assignee_name || "-",
+        avatarText: (subtask.assignee_name || "用").slice(0, 1),
+        titleText: subtask.description,
+        rowKind: "subtask",
+      });
     });
   });
 
@@ -156,6 +181,6 @@ export function formatGanttTooltip(task: GanttTask): string {
 }
 
 export function taskDetailPathFromGanttTask(task: GanttTask): string | undefined {
-  if (!task.parent) return undefined;
+  if (task.rowKind !== "task" || task.hasChildren) return undefined;
   return `/tasks/${task.id}`;
 }

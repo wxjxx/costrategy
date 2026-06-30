@@ -1,26 +1,30 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useMutation, useQueryClient } from "@tanstack/vue-query";
+import { ElMessage } from "element-plus";
 import { VueDraggableNext } from "vue-draggable-next";
 import { useRouter } from "vue-router";
 import { MoreFilled } from "@element-plus/icons-vue";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
-import type { CurrentUser, DisplayStatus, Task, TaskStatus } from "@/types";
+import type { CurrentUser, DisplayStatus, Task, TaskStatus, User } from "@/types";
 import {
   canMoveTaskToStatus,
   displayColumns,
   groupTasksByDisplayStatus,
+  mergeTaskPreservingSubtasks,
   moveTaskForDisplay,
   primaryTaskAssigneeName,
   statusLabel,
   taskAssigneeNames,
 } from "@/features/tasks/taskWorkflow";
+import { kanbanStatusLimit, visibleKanbanTasks } from "./taskKanban";
 
 const props = defineProps<{
   tasks: Task[];
   currentUser: CurrentUser;
+  users: User[];
 }>();
 
 const emit = defineEmits<{
@@ -54,13 +58,20 @@ const mutation = useMutation({
 });
 
 function replaceLocalTask(task: Task) {
-  localTasks.value = localTasks.value.map((item) => (item.id === task.id ? task : item));
+  localTasks.value = localTasks.value.map((item) =>
+    item.id === task.id ? mergeTaskPreservingSubtasks(item, task) : item,
+  );
 }
 
 function clearPendingMove(taskId: string) {
   const nextPendingMoves = { ...pendingMoves.value };
   delete nextPendingMoves[taskId];
   pendingMoves.value = nextPendingMoves;
+}
+
+function primaryTaskAssigneeAvatar(task: Task): string | undefined {
+  const userId = task.assignees?.[0]?.id ?? task.assignee_id;
+  return props.users.find((user) => user.id === userId)?.avatar_url;
 }
 
 async function onDrop(status: DisplayStatus, event: { added?: { element: Task } }) {
@@ -74,6 +85,14 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
 
   if (!canMoveTaskToStatus(previousTask, status, props.currentUser)) {
     replaceLocalTask(previousTask);
+    if (
+      status === "done" &&
+      previousTask.subtasks?.some((subtask) => subtask.status !== "done")
+    ) {
+      ElMessage.warning("完成全部子任务后才能完成主任务");
+    } else {
+      ElMessage.warning("员工仅可拖拽自己负责的任务，管理人员可拖拽全部任务");
+    }
     return;
   }
 
@@ -105,7 +124,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
       </header>
       <VueDraggableNext
         class="kanban-list"
-        :list="groups[column.key].slice(0, 10)"
+        :list="visibleKanbanTasks(column.key, groups[column.key])"
         :group="{ name: 'tasks' }"
         item-key="id"
         @change="onDrop(column.key, $event)"
@@ -123,7 +142,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
           <p>所属项目：{{ task.project_name || "-" }}</p>
           <p class="assignee-line">
             负责人：
-            <UserAvatar :name="primaryTaskAssigneeName(task)" :size="22" />
+            <UserAvatar :name="primaryTaskAssigneeName(task)" :src="primaryTaskAssigneeAvatar(task)" :size="22" />
             {{ taskAssigneeNames(task) }}
           </p>
           <p>截止日期：{{ task.due_date }}</p>
@@ -134,7 +153,7 @@ async function onDrop(status: DisplayStatus, event: { added?: { element: Task } 
         </article>
       </VueDraggableNext>
       <button
-        v-if="groups[column.key].length > 10"
+        v-if="groups[column.key].length > kanbanStatusLimit(column.key)"
         type="button"
         class="kanban-more-button"
         @click="emit('showAll', column.key)"

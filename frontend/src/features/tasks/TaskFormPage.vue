@@ -11,6 +11,8 @@ import Table from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
 import {
   Calendar,
   ChatLineRound,
@@ -28,9 +30,11 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useMutation, useQueryClient } from "@tanstack/vue-query";
 import { api } from "@/api/client";
 import PriorityTag from "@/components/PriorityTag.vue";
+import StatusTag from "@/components/StatusTag.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
 import { selectableUsers } from "@/features/users/userOptions";
 import { clampPage, pageRows } from "@/utils/pagination";
+import type { TaskStatus, TaskSubtask } from "@/types";
 import { isSvgFile } from "./fileValidation";
 import { renderDescriptionHtml } from "./richText";
 
@@ -86,6 +90,24 @@ const form = ref({
   start_date: "",
   due_date: "",
 });
+const subtaskDialogVisible = ref(false);
+const editingSubtaskId = ref("");
+const subtaskForm = ref({
+  assignee_id: "",
+  status: "todo" as TaskStatus,
+  description: "",
+});
+const subtasks = computed(() => detail.value?.task.subtasks ?? []);
+type EditableSubtask = TaskSubtask & { pending?: boolean };
+const pendingSubtasks = ref<EditableSubtask[]>([]);
+const subtaskRows = computed<EditableSubtask[]>(() =>
+  isNew.value ? pendingSubtasks.value : subtasks.value,
+);
+let pendingSubtaskSequence = 0;
+
+function userAvatar(userId?: string): string | undefined {
+  return users.value?.find((user) => user.id === userId)?.avatar_url;
+}
 
 const editor = useEditor({
   extensions: [
@@ -99,6 +121,8 @@ const editor = useEditor({
     TableRow,
     TableHeader,
     TableCell,
+    TaskList,
+    TaskItem.configure({ nested: true }),
   ],
   content: "",
   editorProps: {
@@ -166,6 +190,15 @@ const saveMutation = useMutation({
     const task = await (taskId.value
       ? api.updateTask(taskId.value, payload)
       : api.createTask(payload));
+    if (!taskId.value) {
+      for (const subtask of pendingSubtasks.value) {
+        await api.createSubtask(task.id, {
+          assignee_id: subtask.assignee_id,
+          status: subtask.status,
+          description: subtask.description,
+        });
+      }
+    }
     for (const file of pendingFiles.value) {
       await api.uploadTaskAttachment(task.id, file);
     }
@@ -173,6 +206,7 @@ const saveMutation = useMutation({
   },
   onSuccess: (task) => {
     pendingFiles.value = [];
+    pendingSubtasks.value = [];
     ElMessage.success("任务已保存");
     void queryClient.invalidateQueries({ queryKey: ["tasks"] });
     void queryClient.invalidateQueries({ queryKey: ["task-detail"] });
@@ -190,6 +224,37 @@ const attachmentDeleteMutation = useMutation({
   },
   onError: () => ElMessage.error("附件删除失败，请查看后端日志"),
 });
+
+const subtaskSaveMutation = useMutation({
+  mutationFn: () => {
+    const payload = { ...subtaskForm.value };
+    if (editingSubtaskId.value) {
+      return api.updateSubtask(taskId.value ?? "", editingSubtaskId.value, payload);
+    }
+    return api.createSubtask(taskId.value ?? "", payload);
+  },
+  onSuccess: () => {
+    ElMessage.success("子任务已保存");
+    subtaskDialogVisible.value = false;
+    refreshSubtaskQueries();
+  },
+  onError: () => ElMessage.error("子任务保存失败，请查看后端日志"),
+});
+
+const subtaskDeleteMutation = useMutation({
+  mutationFn: (subtaskId: string) => api.deleteSubtask(taskId.value ?? "", subtaskId),
+  onSuccess: () => {
+    ElMessage.success("子任务已删除");
+    refreshSubtaskQueries();
+  },
+  onError: () => ElMessage.error("子任务删除失败，请查看后端日志"),
+});
+
+function refreshSubtaskQueries() {
+  void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+  void queryClient.invalidateQueries({ queryKey: ["task-detail"] });
+  void queryClient.invalidateQueries({ queryKey: ["task-detail-form", taskId] });
+}
 
 async function saveTask() {
   if (!isNew.value && originalDueDate.value && form.value.due_date !== originalDueDate.value) {
@@ -310,6 +375,11 @@ function insertTable() {
   }
 }
 
+function deleteTable() {
+  const deleted = editor.value?.chain().focus().deleteTable().run();
+  if (deleted) ElMessage.success("已删除表格");
+}
+
 function selectAttachmentFile() {
   uploadInput.value?.click();
 }
@@ -330,6 +400,10 @@ function addPendingFiles(event: Event) {
 
 function removePendingFile(index: number) {
   pendingFiles.value = pendingFiles.value.filter((_, currentIndex) => currentIndex !== index);
+}
+
+function subtaskAssigneeName(assigneeId: string): string | undefined {
+  return assigneeOptions.value.find((user) => user.id === assigneeId)?.name;
 }
 
 async function downloadAttachment(attachmentId: string, fileName: string) {
@@ -355,6 +429,93 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
       type: "warning",
     });
     attachmentDeleteMutation.mutate(attachmentId);
+  } catch {
+    // 用户取消删除。
+  }
+}
+
+function openSubtaskDialog(subtask?: EditableSubtask) {
+  editingSubtaskId.value = subtask?.id ?? "";
+  subtaskForm.value = {
+    assignee_id: subtask?.assignee_id ?? "",
+    status: subtask?.status ?? "todo",
+    description: subtask?.description ?? "",
+  };
+  subtaskDialogVisible.value = true;
+}
+
+function saveSubtask() {
+  if (!subtaskForm.value.assignee_id || !subtaskForm.value.description.trim()) {
+    ElMessage.warning("请填写子任务负责人和描述");
+    return;
+  }
+  subtaskForm.value.description = subtaskForm.value.description.trim();
+  if (isNew.value) {
+    const existingSubtask = pendingSubtasks.value.find(
+      (subtask) => subtask.id === editingSubtaskId.value,
+    );
+    if (existingSubtask) {
+      existingSubtask.assignee_id = subtaskForm.value.assignee_id;
+      existingSubtask.assignee_name = subtaskAssigneeName(subtaskForm.value.assignee_id);
+      existingSubtask.status = subtaskForm.value.status;
+      existingSubtask.description = subtaskForm.value.description;
+    } else {
+      pendingSubtaskSequence += 1;
+      pendingSubtasks.value = [
+        ...pendingSubtasks.value,
+        {
+          id: `pending-subtask-${pendingSubtaskSequence}`,
+          task_id: "",
+          assignee_id: subtaskForm.value.assignee_id,
+          assignee_name: subtaskAssigneeName(subtaskForm.value.assignee_id),
+          status: subtaskForm.value.status,
+          description: subtaskForm.value.description,
+          updated_at: "待保存",
+          is_overdue: false,
+          display_status: subtaskForm.value.status,
+          pending: true,
+        },
+      ];
+    }
+    subtaskDialogVisible.value = false;
+    ElMessage.success("子任务已添加，保存任务后生效");
+    return;
+  }
+  if (!taskId.value) return;
+  subtaskSaveMutation.mutate();
+}
+
+function completeSubtask(subtask: EditableSubtask) {
+  if (subtask.status === "done") return;
+  if (isNew.value) {
+    pendingSubtasks.value = pendingSubtasks.value.map((current) =>
+      current.id === subtask.id ? { ...current, status: "done", display_status: "done" } : current,
+    );
+    ElMessage.success("子任务已标记完成，保存任务后生效");
+    return;
+  }
+  subtaskForm.value = {
+    assignee_id: subtask.assignee_id,
+    status: "done",
+    description: subtask.description,
+  };
+  editingSubtaskId.value = subtask.id;
+  subtaskSaveMutation.mutate();
+}
+
+async function deleteSubtask(subtask: EditableSubtask) {
+  if (isNew.value) {
+    pendingSubtasks.value = pendingSubtasks.value.filter((current) => current.id !== subtask.id);
+    ElMessage.success("子任务已移除");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除子任务“${subtask.description}”？`, "删除子任务", {
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+    subtaskDeleteMutation.mutate(subtask.id);
   } catch {
     // 用户取消删除。
   }
@@ -399,7 +560,7 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
                   :label="user.name"
                   :value="user.id"
                 >
-                  <span class="option-user"><UserAvatar :name="user.name" />{{ user.name }}</span>
+                  <span class="option-user"><UserAvatar :name="user.name" :src="user.avatar_url" />{{ user.name }}</span>
                 </ElOption>
               </ElSelect>
             </ElFormItem>
@@ -451,11 +612,17 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
               <span class="toolbar-separator" />
               <button type="button" title="无序列表" :class="{ active: editor?.isActive('bulletList') }" @click="editor?.chain().focus().toggleBulletList().run()">☰</button>
               <button type="button" title="编号列表" :class="{ active: editor?.isActive('orderedList') }" @click="editor?.chain().focus().toggleOrderedList().run()">1.</button>
+              <button type="button" title="任务清单" :class="{ active: editor?.isActive('taskList') }" @click="editor?.chain().focus().toggleTaskList().run()">☑</button>
               <span class="toolbar-separator" />
               <button type="button" title="链接" :class="{ active: editor?.isActive('link') }" @click="setLink"><ElIcon><LinkIcon /></ElIcon></button>
               <button type="button" title="图片" @click="selectEditorImage"><ElIcon><Picture /></ElIcon></button>
               <input ref="editorImageInput" class="hidden-file-input" type="file" accept="image/*" multiple @change="uploadSelectedEditorImage" />
               <button type="button" title="表格" @click="insertTable"><ElIcon><Grid /></ElIcon></button>
+              <button type="button" title="前插一行" :disabled="!editor?.isActive('table')" @click="editor?.chain().focus().addRowBefore().run()">行↑</button>
+              <button type="button" title="后插一行" :disabled="!editor?.isActive('table')" @click="editor?.chain().focus().addRowAfter().run()">行↓</button>
+              <button type="button" title="前插一列" :disabled="!editor?.isActive('table')" @click="editor?.chain().focus().addColumnBefore().run()">列←</button>
+              <button type="button" title="后插一列" :disabled="!editor?.isActive('table')" @click="editor?.chain().focus().addColumnAfter().run()">列→</button>
+              <button type="button" title="删除表格" :disabled="!editor?.isActive('table')" @click="deleteTable">删表</button>
               <button type="button" title="代码块" :class="{ active: editor?.isActive('codeBlock') }" @click="editor?.chain().focus().toggleCodeBlock().run()"><ElIcon><Document /></ElIcon></button>
               <button type="button" title="引用" :class="{ active: editor?.isActive('blockquote') }" @click="editor?.chain().focus().toggleBlockquote().run()"><ElIcon><ChatLineRound /></ElIcon></button>
               <span class="toolbar-separator" />
@@ -467,6 +634,58 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
           </div>
         </ElFormItem>
       </ElForm>
+    </section>
+
+    <section class="content-card subtask-card">
+      <div class="section-heading">
+        <h3>子任务：</h3>
+        <ElButton type="primary" plain @click="openSubtaskDialog()">新增子任务</ElButton>
+      </div>
+      <ElTable :data="subtaskRows">
+        <ElTableColumn label="任务描述" min-width="260">
+          <template #default="{ row }">
+            <span class="task-title-cell">
+              <span v-if="row.is_overdue" class="overdue-mark">已延期</span>
+              {{ row.description }}
+            </span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="负责人" width="160">
+          <template #default="{ row }">
+            <span class="table-user"><UserAvatar :name="row.assignee_name" :src="userAvatar(row.assignee_id)" />{{ row.assignee_name || "-" }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="状态" width="130">
+          <template #default="{ row }">
+            <StatusTag :status="row.status" />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="是否延期" width="110">
+          <template #default="{ row }">{{ row.is_overdue ? "是" : "否" }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" width="190">
+          <template #default="{ row }">
+            <ElButton
+              v-if="row.status !== 'done'"
+              link
+              type="success"
+              :loading="subtaskSaveMutation.isPending.value"
+              @click="completeSubtask(row)"
+            >
+              完成
+            </ElButton>
+            <ElButton link type="primary" @click="openSubtaskDialog(row)">编辑</ElButton>
+            <ElButton
+              link
+              type="danger"
+              :loading="subtaskDeleteMutation.isPending.value"
+              @click="deleteSubtask(row)"
+            >
+              删除
+            </ElButton>
+          </template>
+        </ElTableColumn>
+      </ElTable>
     </section>
 
     <section class="content-card attachment-card">
@@ -525,5 +744,48 @@ async function deleteAttachment(attachmentId: string, fileName: string) {
       <ElButton @click="router.back()">取消</ElButton>
       <ElButton type="primary" :loading="saveMutation.isPending.value" @click="saveTask">保存</ElButton>
     </div>
+
+    <ElDialog
+      v-model="subtaskDialogVisible"
+      :title="editingSubtaskId ? '编辑子任务' : '新增子任务'"
+      width="520"
+      class="form-dialog"
+    >
+      <ElForm label-width="88px">
+        <ElFormItem label="负责人" required>
+          <ElSelect v-model="subtaskForm.assignee_id" filterable placeholder="请选择负责人">
+            <ElOption
+              v-for="user in assigneeOptions"
+              :key="user.id"
+              :label="user.name"
+              :value="user.id"
+            >
+              <span class="option-user"><UserAvatar :name="user.name" :src="user.avatar_url" />{{ user.name }}</span>
+            </ElOption>
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="状态" required>
+          <ElSelect v-model="subtaskForm.status">
+            <ElOption label="待开始" value="todo" />
+            <ElOption label="进行中" value="in_progress" />
+            <ElOption label="阻塞" value="blocked" />
+            <ElOption label="已完成" value="done" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="任务描述" required>
+          <ElInput v-model="subtaskForm.description" type="textarea" :rows="4" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="subtaskDialogVisible = false">取消</ElButton>
+        <ElButton
+          type="primary"
+          :loading="subtaskSaveMutation.isPending.value"
+          @click="saveSubtask"
+        >
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>

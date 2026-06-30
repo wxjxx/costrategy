@@ -116,6 +116,9 @@ describe("AppShell notifications", () => {
               "<section v-if='modelValue' class='profile-dialog'><h2>{{ title }}</h2><slot /><slot name='footer' /></section>",
           },
           ElIcon: { template: "<span><slot /></span>" },
+          ElScrollbar: {
+            template: "<div class='el-scrollbar-stub'><slot /></div>",
+          },
           RouterLink: { template: "<a><slot /></a>" },
           RouterView: { template: "<section />" },
           UserAvatar: {
@@ -151,6 +154,16 @@ describe("AppShell notifications", () => {
 
     expect(mocks.markMyNotificationRead).toHaveBeenCalledWith("notice-1");
     expect(mocks.push).toHaveBeenCalledWith("/tasks/task-1");
+  });
+
+  it("uses Element Plus scrollbars for page content and notification list", async () => {
+    const wrapper = mountShell();
+
+    expect(wrapper.find(".page-content-scrollbar").exists()).toBe(true);
+
+    await wrapper.get(".notification-trigger").trigger("click");
+
+    expect(wrapper.find(".notification-list-scrollbar").exists()).toBe(true);
   });
 
   it("does not render a chevron next to the current user name", () => {
@@ -195,5 +208,35 @@ describe("AppShell notifications", () => {
       ...currentUser,
       avatar_url: "https://example.test/new.png",
     });
+  });
+
+  it("refreshes avatar-dependent queries after saving the current user avatar", async () => {
+    const wrapper = mountShell();
+
+    await wrapper.get(".profile-trigger").trigger("click");
+    await wrapper
+      .get(".avatar-url-input")
+      .setValue("https://example.test/new.png");
+    await wrapper.get(".profile-avatar-save").trigger("click");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["users"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["tasks"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["task-detail"] });
+  });
+
+  it("closes the notification panel when clicking outside notifications", async () => {
+    const wrapper = mountShell();
+
+    await wrapper.get(".notification-trigger").trigger("click");
+
+    expect(wrapper.find(".notification-panel").exists()).toBe(true);
+
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find(".notification-panel").exists()).toBe(false);
   });
 });
